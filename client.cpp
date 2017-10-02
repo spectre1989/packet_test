@@ -1,37 +1,10 @@
-#include <stdint.h>
 #include <stdio.h>
 #include <WinSock2.h>
-#include <Windows.h>
+
+#include "common.h"
 
 
-#define assert(x) if(!(x)) { int* p = 0; *p = 0; }
 
-
-enum Client_Msg : uint8_t
-{
-	Start_Capture,
-	Test_Packet,
-	End_Capture,
-	Ack_Results
-};
-
-enum Server_Msg : uint8_t
-{
-	Capture_Started,
-	Results
-};
-
-
-static float time_since_s(LARGE_INTEGER* t, LARGE_INTEGER* freq)
-{
-	LARGE_INTEGER now;
-	QueryPerformanceCounter(&now);
-
-	LARGE_INTEGER time_since;
-	time_since.QuadPart = now.QuadPart - t->QuadPart;
-
-	return (float)time_since.QuadPart / (float)freq->QuadPart;
-}
 
 static void create_test_packet(char* buffer, uint32_t id, uint32_t size)
 {
@@ -45,12 +18,12 @@ static void create_test_packet(char* buffer, uint32_t id, uint32_t size)
 	}
 }
 
-static int receive_packet(char* buffer, int buffer_size, sockaddr_in* server_address)
+static int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* server_address)
 {
 	int flags = 0;
 	sockaddr_in from_address;
 	int from_address_len;
-	result = recvfrom(sock, buffer, buffer_size, flags, (sockaddr*)&from_address, &from_address_len);
+	int result = recvfrom(sock, buffer, buffer_size, flags, (sockaddr*)&from_address, &from_address_len);
 	if (result == SOCKET_ERROR)
 	{
 		int error = WSAGetLastError();
@@ -61,8 +34,8 @@ static int receive_packet(char* buffer, int buffer_size, sockaddr_in* server_add
 	}
 	else
 	{
-		if (from_address.sin_addr.S_un.S_addr == server_address.sin_addr.S_un.S_addr &&
-			from_address.sin_port == server_address.sin_port)
+		if (from_address.sin_addr.S_un.S_addr == server_address->sin_addr.S_un.S_addr &&
+			from_address.sin_port == server_address->sin_port)
 		{
 			return result;
 		}
