@@ -1,4 +1,3 @@
-client/.vs/
-client/Debug/
-server/.vs/
-server/Debug/
+.vs/
+client/x64/Debug/
+server/x64/Debug/
