@@ -1,15 +1,14 @@
 #include "common.h"
 
+#include <stdio.h>
 
-float time_since_s(LARGE_INTEGER* t, LARGE_INTEGER* freq)
+
+float time_since_s(LARGE_INTEGER t, LARGE_INTEGER freq)
 {
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
 
-	LARGE_INTEGER time_since;
-	time_since.QuadPart = now.QuadPart - t->QuadPart;
-
-	return (float)time_since.QuadPart / (float)freq->QuadPart;
+	return (float)(now.QuadPart - t.QuadPart) / (float)freq.QuadPart;
 }
 
 void send_packet(SOCKET sock, char* packet, int packet_size, sockaddr_in* address)
@@ -98,24 +97,30 @@ uint32_t create_ack_results_packet(char* buffer, uint32_t batch_id)
 }
 void read_ack_results_packet(char* buffer, uint32_t* batch_id)
 {
-	assert(buffer[0] == Client_Msg::Ack_Result);
+	assert(buffer[0] == Client_Msg::Ack_Results);
 	memcpy(batch_id, &buffer[1], 4);
 }
 
 // server msgs
-uint32_t create_capture_started_packet(char* buffer)
+uint32_t create_capture_started_packet(char* buffer, LARGE_INTEGER clock_frequency)
 {
 	buffer[0] = Server_Msg::Capture_Started;
-	return 1;
+	memcpy(&buffer[1], &clock_frequency.QuadPart, 8);
+	return 9;
+}
+void read_capture_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequency)
+{
+	assert(buffer[0] == Server_Msg::Capture_Started);
+	memcpy(&server_clock_frequency->QuadPart, &buffer[1], 8);
 }
 
 uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_start, uint32_t num_batches, 
 								uint32_t* packet_ids, LARGE_INTEGER* packet_ts, uint32_t packet_count)
 {
 	buffer[0] = Server_Msg::Results;
-	memcpy(&buffer[1], batch_id, 4);
-	memcpy(&buffer[5], batch_start, 4);
-	memcpy(&buffer[9], num_batches, 4);
+	memcpy(&buffer[1], &batch_id, 4);
+	memcpy(&buffer[5], &batch_start, 4);
+	memcpy(&buffer[9], &num_batches, 4);
 	
 	uint32_t bytes_written = 13;
 	for (uint32_t i = 0; i < packet_count; ++i)

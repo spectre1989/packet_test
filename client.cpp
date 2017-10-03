@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <time.h>
+
 #include "common.h"
 
 
@@ -5,7 +8,7 @@
 
 int main()
 {
-	srand(time(0));
+	srand((unsigned int)time(0));
 
 	WSADATA wsa_data;
 	int result = WSAStartup(0x202, &wsa_data);
@@ -32,6 +35,7 @@ int main()
 	const uint32_t num_packets = time_s * packets_per_s;
 	char send_buffer[2048];
 	char recv_buffer[2048];
+	LARGE_INTEGER server_clock_frequency;
 
 	uint32_t packet_size = create_start_capture_packet(send_buffer, num_packets);
 	while (true)
@@ -45,12 +49,13 @@ int main()
 		bool got_reply = false;
 		while (true)
 		{
-			if (receive_packet(recv_buffer, sizeof(recv_buffer), &server_address))
+			if (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address))
 			{
 				switch (recv_buffer[0])
 				{
 				case Server_Msg::Capture_Started:
 					printf("got Capture_Started\n");
+					read_capture_started_packet(recv_buffer, &server_clock_frequency);
 					got_reply = true;
 					break;
 
@@ -58,7 +63,7 @@ int main()
 				}
 			}
 
-			if (time_since_s(&t, &clock_frequency) > 5.0f)
+			if (time_since_s(t, clock_frequency) > 5.0f)
 			{
 				break;
 			}
@@ -90,7 +95,7 @@ int main()
 
 		while (true)
 		{
-			float delta_s = time_since_s(&t, &clock_frequency);
+			float delta_s = time_since_s(t, clock_frequency);
 			
 			if (sleep_granularity_was_set)
 			{
@@ -108,7 +113,6 @@ int main()
 		}
 	}
 
-	LARGE_INTEGER results_frequency;
 	uint32_t results_packet_ids[num_packets];
 	LARGE_INTEGER results_packet_ts[num_packets];
 	bool has_received_first_batch = false;
@@ -122,7 +126,7 @@ int main()
 	QueryPerformanceCounter(&t);
 	while (true)
 	{
-		int bytes_received = receive_packet(recv_buffer, sizeof(recv_buffer), &server_address);
+		int bytes_received = receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address);
 		if (bytes_received)
 		{
 			switch (recv_buffer[0])
@@ -165,7 +169,7 @@ int main()
 			break;
 		}
 
-		if (!has_received_first_batch && time_since_s(&t, &clock_frequency) > 5.0f)
+		if (!has_received_first_batch && time_since_s(t, clock_frequency) > 5.0f)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
 			QueryPerformanceCounter(&t);
