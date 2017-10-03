@@ -1,52 +1,6 @@
-#include <stdio.h>
-#include <WinSock2.h>
-
 #include "common.h"
 
 
-
-
-static void create_test_packet(char* buffer, uint32_t id, uint32_t size)
-{
-	buffer[0] = Client_Msg::Test_Packet;
-	memcpy(&buffer[1], &id, 4);
-
-	for (uint32_t i = 5; i < size; ++i)
-	{
-		int r = rand();
-		memcpy(&buffer[i], &r, 1);
-	}
-}
-
-static int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* server_address)
-{
-	int flags = 0;
-	sockaddr_in from_address;
-	int from_address_len;
-	int result = recvfrom(sock, buffer, buffer_size, flags, (sockaddr*)&from_address, &from_address_len);
-	if (result == SOCKET_ERROR)
-	{
-		int error = WSAGetLastError();
-		if (error != WSAEWOULDBLOCK)
-		{
-			printf("recvfrom error %d\n", error);
-		}
-	}
-	else
-	{
-		if (from_address.sin_addr.S_un.S_addr == server_address->sin_addr.S_un.S_addr &&
-			from_address.sin_port == server_address->sin_port)
-		{
-			return result;
-		}
-		else
-		{
-			printf("received packet but not from server");
-		}
-	}
-
-	return 0;
-}
 
 
 int main()
@@ -73,19 +27,17 @@ int main()
 
 	const uint32_t time_s = 10;
 	const uint32_t packets_per_s = 5;
-	uint32_t packet_size = 32;
+	uint32_t test_packet_size = 32;
 	float packet_interval_s = 1.0f / (float)packets_per_s;
 	const uint32_t num_packets = time_s * packets_per_s;
 	char send_buffer[2048];
 	char recv_buffer[2048];
 
-	send_buffer[0] = Client_Msg::Start_Capture;
-	memcpy(&send_buffer[1], &num_packets, 4);
+	uint32_t packet_size = create_start_capture_packet(send_buffer, num_packets);
 	while (true)
 	{
-		int flags = 0;
-		sendto(sock, send_buffer, 5, flags, (sockaddr*)&server_address, sizeof(server_address));
-		printf("sending Start_Capture\n");
+		send_packet(sock, send_buffer, packet_size, &server_address);
+		printf("sent Start_Capture\n");
 
 		LARGE_INTEGER t;
 		QueryPerformanceCounter(&t);
@@ -118,22 +70,15 @@ int main()
 		}
 	}
 
-	// todo(jbr) randomly generate packet contents
 	
 	uint32_t packet_id = 0;
-	create_test_packet(send_buffer, packet_id, packet_size);
+	packet_size = create_test_packet(send_buffer, packet_id, test_packet_size);
 	while (true)
 	{
-		int flags = 0;
-		sendto(sock, send_buffer, packet_size, flags, (sockaddr*)&server_address, sizeof(server_address));
+		send_packet(sock, send_buffer, packet_size, &server_address);
 
 		LARGE_INTEGER t;
 		QueryPerformanceCounter(&t);
-
-		if (result == SOCKET_ERROR)
-		{
-			printf("sendto error %d\n", WSAGetLastError());
-		}
 
 		++packet_id;
 		if (packet_id == num_packets)
@@ -141,7 +86,7 @@ int main()
 			break;
 		}
 
-		create_test_packet(send_buffer, packet_id, packet_size);
+		create_test_packet(send_buffer, packet_id, test_packet_size);
 
 		while (true)
 		{
@@ -171,9 +116,8 @@ int main()
 	uint32_t num_batches = 0;
 	uint32_t num_batches_received = 0;
 
-	send_buffer[0] = Client_Msg::End_Capture;
-	int flags = 0;
-	sendto(sock, send_buffer, 1, flags, (sockaddr*)&server_address, sizeof(server_address));
+	packet_size = create_end_capture_packet(send_buffer);
+	send_packet(sock, send_buffer, packet_size, &server_address);
 	LARGE_INTEGER t;
 	QueryPerformanceCounter(&t);
 	while (true)
@@ -184,16 +128,13 @@ int main()
 			switch (recv_buffer[0])
 			{
 			case Server_Msg::Results:
-				uint32_t batch_id = 0;
-				uint32_t batch_start = 0;
-				memcpy(&batch_id, &buffer[1], 4);
-				memcpy(&batch_start, &buffer[5], 4);
+				uint32_t batch_id;
+				uint32_t num_batches;
+				read_results_packet(recv_buffer, bytes_received, &batch_id, &num_batches, results_packet_ids, results_packet_ts);
 				
 				if (!has_received_first_batch)
 				{
 					has_received_first_batch = true;
-
-					memcpy(&num_batches, &buffer[9], 4);
 
 					batches_received = new bool[num_batches];
 					for (uint32_t i = 0; i < num_batches; ++i)
@@ -206,23 +147,12 @@ int main()
 
 				if (!batches_received[batch_id])
 				{
-					uint32_t buffer_i = 13;
-					for (uint32_t i = 0; buffer_i < bytes_received; ++i)
-					{
-						memcpy(&results_packet_ids[batch_start + i], &recv_buffer[buffer_i], 4);
-						buffer_i += 4;
-						memcpy(&results_packet_ts[batch_start + i].QuadPart, &recv_buffer[buffer_i], 8);
-						buffer_i += 8;
-					}
-
 					batches_received[batch_id] = true;
 					++num_batches_received;
 				}
 
-				send_buffer[0] = Client_Msg::Ack_Results;
-				memcpy(&send_buffer[1], &batch_id, 4);
-				int flags = 0;
-				sendto(sock, send_buffer, 5, flags, (sockaddr*)&server_address, sizeof(server_address));
+				packet_size = create_ack_results_packet(send_buffer, batch_id);
+				send_packet(sock, send_buffer, packet_size, &server_address);
 
 				break;
 
@@ -237,7 +167,7 @@ int main()
 
 		if (!has_received_first_batch && time_since_s(&t, &clock_frequency) > 5.0f)
 		{
-			sendto(sock, send_buffer, 1, flags, (sockaddr*)&server_address, sizeof(server_address));
+			send_packet(sock, send_buffer, packet_size, &server_address);
 			QueryPerformanceCounter(&t);
 		}
 	}
