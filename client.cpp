@@ -27,9 +27,15 @@ int main()
 	QueryPerformanceFrequency(&clock_frequency);
 
 	sockaddr_in server_address;
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.S_un.S_un_b.s_b1 = 127;
+	server_address.sin_addr.S_un.S_un_b.s_b2 = 0;
+	server_address.sin_addr.S_un.S_un_b.s_b3 = 0;
+	server_address.sin_addr.S_un.S_un_b.s_b4 = 1;
+	server_address.sin_port = htons(c_port);
 
 	const uint32_t time_s = 10;
-	const uint32_t packets_per_s = 5;
+	const uint32_t packets_per_s = 120;
 	uint32_t test_packet_size = 32;
 	float packet_interval_s = 1.0f / (float)packets_per_s;
 	const uint32_t num_packets = time_s * packets_per_s;
@@ -37,6 +43,7 @@ int main()
 	char recv_buffer[2048];
 	LARGE_INTEGER server_clock_frequency;
 
+	// starting capture
 	uint32_t packet_size = create_start_capture_packet(send_buffer, num_packets);
 	while (true)
 	{
@@ -76,6 +83,7 @@ int main()
 	}
 
 	
+	// doing capture
 	uint32_t packet_id = 0;
 	packet_size = create_test_packet(send_buffer, packet_id, test_packet_size);
 	while (true)
@@ -113,6 +121,7 @@ int main()
 		}
 	}
 
+	// get results
 	uint32_t results_packet_ids[num_packets];
 	LARGE_INTEGER results_packet_ts[num_packets];
 	bool has_received_first_batch = false;
@@ -122,6 +131,7 @@ int main()
 
 	packet_size = create_end_capture_packet(send_buffer);
 	send_packet(sock, send_buffer, packet_size, &server_address);
+	printf("sent End_Capture\n");
 	LARGE_INTEGER t;
 	QueryPerformanceCounter(&t);
 	while (true)
@@ -133,7 +143,6 @@ int main()
 			{
 			case Server_Msg::Results:
 				uint32_t batch_id;
-				uint32_t num_batches;
 				read_results_packet(recv_buffer, bytes_received, &batch_id, &num_batches, results_packet_ids, results_packet_ts);
 				
 				if (!has_received_first_batch)
@@ -147,7 +156,7 @@ int main()
 					}
 				}
 
-				printf("got results batch %d/%d\n", batch_id + 1, num_batches);
+				printf("got batch %d/%d\n", batch_id + 1, num_batches);
 
 				if (!batches_received[batch_id])
 				{
@@ -164,7 +173,7 @@ int main()
 			}
 		}
 
-		if (num_batches_received == num_batches)
+		if (num_batches > 0 && num_batches_received == num_batches)
 		{
 			break;
 		}
@@ -172,6 +181,7 @@ int main()
 		if (!has_received_first_batch && time_since_s(t, clock_frequency) > 5.0f)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
+			printf("sent End_Capture\n");
 			QueryPerformanceCounter(&t);
 		}
 	}

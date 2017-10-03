@@ -25,7 +25,7 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 {
 	int flags = 0;
 	sockaddr_in from_address;
-	int from_address_len;
+	int from_address_len = sizeof(from_address);
 	int result = recvfrom(sock, buffer, buffer_size, flags, (sockaddr*)&from_address, &from_address_len);
 	if (result == SOCKET_ERROR)
 	{
@@ -114,8 +114,8 @@ void read_capture_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequ
 	memcpy(&server_clock_frequency->QuadPart, &buffer[1], 8);
 }
 
-uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_start, uint32_t num_batches, 
-								uint32_t* packet_ids, LARGE_INTEGER* packet_ts, uint32_t packet_count)
+uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_start, uint32_t num_batches, uint32_t max_results_per_batch,
+								uint32_t* results_ids, LARGE_INTEGER* results_ts, uint32_t results_count)
 {
 	buffer[0] = Server_Msg::Results;
 	memcpy(&buffer[1], &batch_id, 4);
@@ -123,11 +123,13 @@ uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_s
 	memcpy(&buffer[9], &num_batches, 4);
 	
 	uint32_t bytes_written = 13;
-	for (uint32_t i = 0; i < packet_count; ++i)
+	for (uint32_t i = 0, results_i = batch_start; 
+		i < max_results_per_batch && results_i < results_count; 
+		++i, ++results_i)
 	{
-		memcpy(&buffer[bytes_written], &packet_ids[batch_start + i], 4);
+		memcpy(&buffer[bytes_written], &results_ids[results_i], 4);
 		bytes_written += 4;
-		memcpy(&buffer[bytes_written], &packet_ts[batch_start + i].QuadPart, 8);
+		memcpy(&buffer[bytes_written], &results_ts[results_i].QuadPart, 8);
 		bytes_written += 8;
 	}
 
@@ -151,5 +153,6 @@ void read_results_packet(char* buffer, uint32_t packet_size, uint32_t* batch_id,
 		bytes_read += 4;
 		memcpy(&packet_ts[batch_i].QuadPart, &buffer[bytes_read], 8);
 		bytes_read += 8;
+		++batch_i;
 	}
 }
