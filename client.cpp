@@ -103,6 +103,11 @@ int main()
 					}
 				}
 
+				if (got_reply)
+				{
+					break;
+				}
+
 				if (time_since_s(t, clock_frequency) > 5.0f)
 				{
 					break;
@@ -136,18 +141,21 @@ int main()
 
 			while (true)
 			{
-				float delta_s = time_since_s(t, clock_frequency);
+				float time_since_last_packet_sent_s = time_since_s(t, clock_frequency);
+				float time_until_next_packet_s = packet_interval_s - time_since_last_packet_sent_s;
 				
-				if (sleep_granularity_was_set)
+				if (time_until_next_packet_s > 0.0f)
 				{
-					uint32_t time_since_ms = (uint32_t)(delta_s * 1000.0f); // intentional rounding down, don't want to oversleep
-					if (time_since_ms > 0)
+					if (sleep_granularity_was_set)
 					{
-						Sleep(time_since_ms);
+						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0f); // intentional rounding down, don't want to oversleep
+						if (time_until_next_packet_ms > 0)
+						{
+							Sleep(time_until_next_packet_ms);
+						}
 					}
 				}
-				
-				if (delta_s >= packet_interval_s)
+				else
 				{
 					break;
 				}
