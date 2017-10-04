@@ -174,14 +174,14 @@ int main()
 		QueryPerformanceCounter(&time_end_capture_sent);
 		while (true)
 		{
-			int bytes_received = receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address);
-			if (bytes_received)
+			int num_bytes_received = receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address);
+			if (num_bytes_received)
 			{
 				switch (recv_buffer[0])
 				{
 				case Server_Msg::Results:
 					uint32_t batch_id;
-					read_results_packet(recv_buffer, bytes_received, &batch_id, &num_batches, results_packet_ids, results_packet_ts);
+					read_results_packet_header(recv_buffer, &batch_id, &num_batches);
 					
 					if (!has_received_first_batch)
 					{
@@ -216,6 +216,8 @@ int main()
 					{
 						results_batches_received[batch_id] = true;
 						++num_batches_received;
+
+						read_results_packet_body(recv_buffer, num_bytes_received, results_packet_ids, results_packet_ts);
 					}
 
 					packet_size = create_ack_results_packet(send_buffer, batch_id);

@@ -99,6 +99,8 @@ int main()
 		printf("sent Capture_Started\n");
 		LARGE_INTEGER time_capture_started_was_sent;
 		QueryPerformanceCounter(&time_capture_started_was_sent);
+		LARGE_INTEGER time_first_test_packed_received;
+		bool has_received_first_test_packed = false;
 		LARGE_INTEGER time_last_test_packet_received;
 		bool end_capture_received = false;
 		while (true)
@@ -118,7 +120,7 @@ int main()
 					if (results_count == results_capacity)
 					{
 						// if we've run out of space, that means there has been some duplicated packets,
-						// that's rare so rather than doubling capacity, adding a bunch should be plenty
+						// that's rare so shouldn't need much extra capacity
 						uint32_t new_results_capacity = results_capacity + 32;
 						printf("resizing results array from %d to %d\n", results_capacity, new_results_capacity);
 						
@@ -135,11 +137,18 @@ int main()
 						results_ts = new_results_ts;
 					}
 
-					results_ids[results_count] = id;
-					results_ts[results_count] = now;
-					++results_count;
-
 					time_last_test_packet_received = now;
+
+					if (!has_received_first_test_packed)
+					{
+						has_received_first_test_packed = true;
+						time_first_test_packed_received = now;
+					}
+
+					results_ids[results_count] = id;
+					results_ts[results_count].QuadPart = now.QuadPart - time_first_test_packed_received.QuadPart;
+					++results_count;
+					
 					break;
 
 				case Client_Msg::End_Capture:

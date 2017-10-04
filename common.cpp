@@ -163,15 +163,19 @@ uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_s
 
 	return bytes_written;
 }
-void read_results_packet(char* buffer, uint32_t packet_size, uint32_t* batch_id, uint32_t* num_batches, 
-								uint32_t* packet_ids, LARGE_INTEGER* packet_ts)
+void read_results_packet_header(char* buffer, uint32_t* batch_id, uint32_t* num_batches)
 {
 	assert(buffer[0] == Server_Msg::Results);
 
 	memcpy(batch_id, &buffer[1], 4);
+	memcpy(num_batches, &buffer[9], 4);
+}
+void read_results_packet_body(char* buffer, uint32_t packet_size, uint32_t* packet_ids, LARGE_INTEGER* packet_ts)
+{
+	assert(buffer[0] == Server_Msg::Results);
+
 	uint32_t batch_start;
 	memcpy(&batch_start, &buffer[5], 4);
-	memcpy(num_batches, &buffer[9], 4);
 
 	uint32_t batch_i = batch_start;
 	uint32_t bytes_read = 13;
@@ -182,5 +186,8 @@ void read_results_packet(char* buffer, uint32_t packet_size, uint32_t* batch_id,
 		memcpy(&packet_ts[batch_i].QuadPart, &buffer[bytes_read], 8);
 		bytes_read += 8;
 		++batch_i;
+		LARGE_INTEGER freq;
+		QueryPerformanceFrequency(&freq);
+		printf("%f\n", (double)(packet_ts[batch_i - 1].QuadPart * 1000) / (double)freq.QuadPart);
 	}
 }

@@ -46,5 +46,5 @@ uint32_t create_capture_started_packet(char* buffer, LARGE_INTEGER clock_frequen
 void read_capture_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequency);
 uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_start, uint32_t num_batches, uint32_t max_results_per_batch,
 								uint32_t* results_ids, LARGE_INTEGER* results_ts, uint32_t results_count);
-void read_results_packet(char* buffer, uint32_t packet_size, uint32_t* batch_id, uint32_t* num_batches, 
-								uint32_t* packet_ids, LARGE_INTEGER* packet_ts);
+void read_results_packet_header(char* buffer, uint32_t* batch_id, uint32_t* num_batches);
+void read_results_packet_body(char* buffer, uint32_t packet_size, uint32_t* packet_ids, LARGE_INTEGER* packet_ts);
