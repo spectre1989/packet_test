@@ -117,7 +117,9 @@ int main()
 
 					if (results_count == results_capacity)
 					{
-						uint32_t new_results_capacity = results_capacity * 2;
+						// if we've run out of space, that means there has been some duplicated packets,
+						// that's rare so rather than doubling capacity, adding a bunch should be plenty
+						uint32_t new_results_capacity = results_capacity + 32;
 						printf("resizing results array from %d to %d\n", results_capacity, new_results_capacity);
 						
 						uint32_t* new_results_ids = new uint32_t[new_results_capacity];
@@ -161,13 +163,12 @@ int main()
 		}
 
 		// sending results
-		// send in 1k batches, need 13 bytes for packet header, and then 12 bytes per result
-		uint32_t num_results_per_batch = (1024 - 13) / 12;
-		uint32_t num_batches = (results_count / num_results_per_batch) + ((results_count % num_results_per_batch) ? 1 : 0); // if results per batch doesn't exactly divide in to results count, then we need an extra batch
+		uint32_t num_batches = num_batches_needed_for_num_results(results_count);
 		if (batch_acks_capacity < num_batches)
 		{
 			delete[] batch_acks;
-			batch_acks = new bool[num_batches];
+			batch_acks_capacity = num_batches;
+			batch_acks = new bool[batch_acks_capacity];
 		}
 		for (uint32_t i = 0; i < num_batches; ++i)
 		{
@@ -185,9 +186,9 @@ int main()
 					uint32_t packet_size = create_results_packet(
 						send_buffer,
 						i, // batch id
-						i * num_results_per_batch, // batch start
+						i * c_num_results_per_batch, // batch start
 						num_batches,
-						num_results_per_batch,
+						c_num_results_per_batch,
 						results_ids,
 						results_ts,
 						results_count);

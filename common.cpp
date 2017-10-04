@@ -11,8 +11,21 @@ float time_since_s(LARGE_INTEGER t, LARGE_INTEGER freq)
 	return (float)(now.QuadPart - t.QuadPart) / (float)freq.QuadPart;
 }
 
+uint32_t num_batches_needed_for_num_results(uint32_t num_results)
+{
+	return (num_results / c_num_results_per_batch) + ((num_results % c_num_results_per_batch) ? 1 : 0); // if results per batch doesn't exactly divide in to results count, then we need an extra batch
+}
+
 void send_packet(SOCKET sock, char* packet, int packet_size, sockaddr_in* address)
 {
+	// todo(jbr) test this
+#if FAKE_PACKET_LOSS
+	if ((rand() % 100) < 50)
+	{
+		return;
+	}
+#endif
+
 	int flags = 0;
 	int result = sendto(sock, packet, packet_size, flags, (sockaddr*)address, sizeof(*address));
 	if (result == SOCKET_ERROR)
@@ -40,6 +53,13 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 		if (from_address.sin_addr.S_un.S_addr == address->sin_addr.S_un.S_addr &&
 			from_address.sin_port == address->sin_port)
 		{
+#if FAKE_PACKET_LOSS
+			if ((rand() % 100) < 50)
+			{
+				return 0;
+			}
+#endif
+
 			return result;
 		}
 		else
@@ -117,20 +137,28 @@ void read_capture_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequ
 uint32_t create_results_packet(char* buffer, uint32_t batch_id, uint32_t batch_start, uint32_t num_batches, uint32_t max_results_per_batch,
 								uint32_t* results_ids, LARGE_INTEGER* results_ts, uint32_t results_count)
 {
+	uint32_t bytes_written = 0;
+
 	buffer[0] = Server_Msg::Results;
-	memcpy(&buffer[1], &batch_id, 4);
-	memcpy(&buffer[5], &batch_start, 4);
-	memcpy(&buffer[9], &num_batches, 4);
+	++bytes_written;
+
+	memcpy(&buffer[bytes_written], &batch_id, 4);
+	bytes_written += 4;
+
+	memcpy(&buffer[bytes_written], &batch_start, 4);
+	bytes_written += 4;
+
+	memcpy(&buffer[bytes_written], &num_batches, 4);
+	bytes_written += 4;
 	
-	uint32_t bytes_written = 13;
+	assert(bytes_written == c_batch_header_size_in_bytes);
 	for (uint32_t i = 0, results_i = batch_start; 
 		i < max_results_per_batch && results_i < results_count; 
 		++i, ++results_i)
 	{
 		memcpy(&buffer[bytes_written], &results_ids[results_i], 4);
-		bytes_written += 4;
-		memcpy(&buffer[bytes_written], &results_ts[results_i].QuadPart, 8);
-		bytes_written += 8;
+		memcpy(&buffer[bytes_written + 4], &results_ts[results_i].QuadPart, 8);
+		bytes_written += c_bytes_per_result;
 	}
 
 	return bytes_written;

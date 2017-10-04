@@ -8,6 +8,10 @@
 
 
 const uint16_t c_port = 9876;
+const uint32_t c_batch_size_in_bytes = 1024;
+const uint32_t c_batch_header_size_in_bytes = 13;
+const uint32_t c_bytes_per_result = 12;
+const uint32_t c_num_results_per_batch = (c_batch_size_in_bytes - c_batch_header_size_in_bytes) / c_bytes_per_result;
 
 
 enum Client_Msg : uint8_t
@@ -26,6 +30,7 @@ enum Server_Msg : uint8_t
 
 
 float time_since_s(LARGE_INTEGER t, LARGE_INTEGER freq);
+uint32_t num_batches_needed_for_num_results(uint32_t num_results);
 void send_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* address);
 int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* address);
 // client msgs
