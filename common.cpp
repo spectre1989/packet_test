@@ -16,14 +16,20 @@ uint32_t num_batches_needed_for_num_results(uint32_t num_results)
 	return (num_results / c_num_results_per_batch) + ((num_results % c_num_results_per_batch) ? 1 : 0); // if results per batch doesn't exactly divide in to results count, then we need an extra batch
 }
 
+#ifdef FAKE_PACKET_LOSS
+static bool s_has_done_a_send = false;
+#endif
+
 void send_packet(SOCKET sock, char* packet, int packet_size, sockaddr_in* address)
 {
-	// todo(jbr) test this
-#if FAKE_PACKET_LOSS
+	// todo(jbr) remove this when done with it
+#ifdef FAKE_PACKET_LOSS
 	if ((rand() % 100) < 50)
 	{
 		return;
 	}
+
+	s_has_done_a_send = true;
 #endif
 
 	int flags = 0;
@@ -36,6 +42,13 @@ void send_packet(SOCKET sock, char* packet, int packet_size, sockaddr_in* addres
 
 int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* address)
 {
+#ifdef FAKE_PACKET_LOSS
+	if (!s_has_done_a_send)
+	{
+		return 0;
+	}
+#endif
+
 	int flags = 0;
 	sockaddr_in from_address;
 	int from_address_len = sizeof(from_address);
@@ -43,7 +56,8 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 	if (result == SOCKET_ERROR)
 	{
 		int error = WSAGetLastError();
-		if (error != WSAEWOULDBLOCK)
+		if (error != WSAEWOULDBLOCK &&
+			error != WSAECONNRESET)
 		{
 			printf("recvfrom error %d\n", error);
 		}
@@ -53,7 +67,7 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 		if (from_address.sin_addr.S_un.S_addr == address->sin_addr.S_un.S_addr &&
 			from_address.sin_port == address->sin_port)
 		{
-#if FAKE_PACKET_LOSS
+#ifdef FAKE_PACKET_LOSS
 			if ((rand() % 100) < 50)
 			{
 				return 0;
@@ -72,15 +86,15 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 }
 
 // client msgs
-uint32_t create_start_capture_packet(char* buffer, uint32_t num_packets)
+uint32_t create_start_test_packet(char* buffer, uint32_t num_packets)
 {
-	buffer[0] = Client_Msg::Start_Capture;
+	buffer[0] = Client_Msg::Start_Test;
 	memcpy(&buffer[1], &num_packets, 4);
 	return 5;
 }
-void read_start_capture_packet(char* buffer, uint32_t* num_packets)
+void read_start_test_packet(char* buffer, uint32_t* num_packets)
 {
-	assert(buffer[0] == Client_Msg::Start_Capture);
+	assert(buffer[0] == Client_Msg::Start_Test);
 	memcpy(num_packets, &buffer[1], 4);
 }
 
@@ -103,9 +117,9 @@ void read_test_packet(char* buffer, uint32_t* id)
 	memcpy(id, &buffer[1], 4);
 }
 
-uint32_t create_end_capture_packet(char* buffer)
+uint32_t create_end_test_packet(char* buffer)
 {
-	buffer[0] = Client_Msg::End_Capture;
+	buffer[0] = Client_Msg::End_Test;
 	return 1;
 }
 
@@ -122,15 +136,15 @@ void read_ack_results_packet(char* buffer, uint32_t* batch_id)
 }
 
 // server msgs
-uint32_t create_capture_started_packet(char* buffer, LARGE_INTEGER clock_frequency)
+uint32_t create_test_started_packet(char* buffer, LARGE_INTEGER clock_frequency)
 {
-	buffer[0] = Server_Msg::Capture_Started;
+	buffer[0] = Server_Msg::Test_Started;
 	memcpy(&buffer[1], &clock_frequency.QuadPart, 8);
 	return 9;
 }
-void read_capture_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequency)
+void read_test_started_packet(char* buffer, LARGE_INTEGER* server_clock_frequency)
 {
-	assert(buffer[0] == Server_Msg::Capture_Started);
+	assert(buffer[0] == Server_Msg::Test_Started);
 	memcpy(&server_clock_frequency->QuadPart, &buffer[1], 8);
 }
 
@@ -186,8 +200,5 @@ void read_results_packet_body(char* buffer, uint32_t packet_size, uint32_t* pack
 		memcpy(&packet_ts[batch_i].QuadPart, &buffer[bytes_read], 8);
 		bytes_read += 8;
 		++batch_i;
-		LARGE_INTEGER freq;
-		QueryPerformanceFrequency(&freq);
-		printf("%f\n", (double)(packet_ts[batch_i - 1].QuadPart * 1000) / (double)freq.QuadPart);
 	}
 }

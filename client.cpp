@@ -36,27 +36,29 @@ int main()
 
 	struct Test_Config
 	{
-		uint32_t time_s;
+		uint32_t duration_s;
 		uint32_t packets_per_s;
 		uint32_t packet_size;
 	};
 
 	char send_buffer[2048];
 	char recv_buffer[2048];
-	LARGE_INTEGER server_clock_frequency; // server sends this to us 
+	LARGE_INTEGER server_clock_frequency;
 
 	uint32_t* results_packet_ids = 0;
 	LARGE_INTEGER* results_packet_ts = 0;
 	uint32_t results_capacity = 0;
+	uint32_t results_count = 0;
 	bool* results_batches_received = 0;
 	uint32_t results_batches_received_capacity = 0;
 
 	Test_Config test_configs[4] = {{10, 10, 32},{10, 20, 32},{10, 30, 32},{10, 40, 32}};
 	uint32_t num_test_configs = 4;
+	FILE* out_file = 0;
 
 	for (uint32_t i = 0; i < num_test_configs; ++i)
 	{
-		uint32_t num_packets = test_configs[i].packets_per_s * test_configs[i].time_s;
+		uint32_t num_packets = test_configs[i].packets_per_s * test_configs[i].duration_s;
 		uint32_t num_batches_needed = num_batches_needed_for_num_results(num_packets);
 
 		if (num_batches_needed > results_batches_received_capacity)
@@ -74,14 +76,14 @@ int main()
 	while (test_config != test_config_end)
 	{
 		float packet_interval_s = 1.0f / (float)test_config->packets_per_s;
-		const uint32_t num_packets = test_config->time_s * test_config->packets_per_s;
+		const uint32_t num_packets = test_config->duration_s * test_config->packets_per_s;
 
-		// starting capture
-		uint32_t packet_size = create_start_capture_packet(send_buffer, num_packets);
+		// starting test
+		uint32_t packet_size = create_start_test_packet(send_buffer, num_packets);
 		while (true)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
-			printf("sent Start_Capture\n");
+			printf("sent Start_Test\n");
 
 			LARGE_INTEGER t;
 			QueryPerformanceCounter(&t);
@@ -91,21 +93,15 @@ int main()
 			{
 				if (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address))
 				{
-					switch (recv_buffer[0])
+					if (recv_buffer[0] == Server_Msg::Test_Started)
 					{
-					case Server_Msg::Capture_Started:
-						printf("got Capture_Started\n");
-						read_capture_started_packet(recv_buffer, &server_clock_frequency);
+						printf("got Test_Started\n");
+						read_test_started_packet(recv_buffer, &server_clock_frequency);
 						got_reply = true;
 						break;
-
-						// todo(jbr) unexpected cases
 					}
-				}
-
-				if (got_reply)
-				{
-					break;
+					// can safely ignore results packets here, server will 
+					// stop sending them when they get Start_Test
 				}
 
 				if (time_since_s(t, clock_frequency) > 5.0f)
@@ -121,7 +117,7 @@ int main()
 		}
 
 		
-		// doing capture
+		// doing test
 		uint32_t packet_id = 0;
 		packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
 		while (true)
@@ -166,20 +162,22 @@ int main()
 		bool has_received_first_batch = false;
 		uint32_t num_batches = 0;
 		uint32_t num_batches_received = 0;
+		results_count = 0;
 
-		packet_size = create_end_capture_packet(send_buffer);
+		packet_size = create_end_test_packet(send_buffer);
 		send_packet(sock, send_buffer, packet_size, &server_address);
-		printf("sent End_Capture\n");
-		LARGE_INTEGER time_end_capture_sent;
-		QueryPerformanceCounter(&time_end_capture_sent);
+		printf("sent End_Test\n");
+		LARGE_INTEGER time_end_test_sent;
+		QueryPerformanceCounter(&time_end_test_sent);
+		LARGE_INTEGER timeout_timer = time_end_test_sent;
+		bool timed_out = false;
 		while (true)
 		{
 			int num_bytes_received = receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address);
 			if (num_bytes_received)
 			{
-				switch (recv_buffer[0])
+				if (recv_buffer[0] == Server_Msg::Results)
 				{
-				case Server_Msg::Results:
 					uint32_t batch_id;
 					read_results_packet_header(recv_buffer, &batch_id, &num_batches);
 					
@@ -218,15 +216,20 @@ int main()
 						++num_batches_received;
 
 						read_results_packet_body(recv_buffer, num_bytes_received, results_packet_ids, results_packet_ts);
+
+						// if it's the last batch, calculate the total number of results
+						if (batch_id == num_batches - 1)
+						{
+							results_count = ((num_batches - 1) * c_num_results_per_batch) + ((num_bytes_received - c_batch_header_size_in_bytes) / c_bytes_per_result);
+						}
 					}
 
 					packet_size = create_ack_results_packet(send_buffer, batch_id);
 					send_packet(sock, send_buffer, packet_size, &server_address);
 
-					break;
-
-					// todo(jbr) unexpected cases
+					QueryPerformanceCounter(&timeout_timer);
 				}
+				// Test_Started packet can be ignored here
 			}
 
 			if (num_batches > 0 && num_batches_received == num_batches)
@@ -234,19 +237,58 @@ int main()
 				break;
 			}
 
-			if (!has_received_first_batch && time_since_s(time_end_capture_sent, clock_frequency) > 5.0f)
+			if (time_since_s(timeout_timer, clock_frequency) > 30.0f)
+			{
+				timed_out = true;
+				printf("timed out\n");
+				break;
+			}
+
+			if (!has_received_first_batch && time_since_s(time_end_test_sent, clock_frequency) > 5.0f)
 			{
 				send_packet(sock, send_buffer, packet_size, &server_address);
-				printf("sent End_Capture\n");
-				QueryPerformanceCounter(&time_end_capture_sent);
+				printf("sent End_Test\n");
+				QueryPerformanceCounter(&time_end_test_sent);
 			}
 		}
 
-		++test_config;
+		if (timed_out)
+		{
+			// try again
+		}
+		else
+		{
+			// write results
+			if (!out_file)
+			{
+				errno_t err = fopen_s(&out_file, "results.json", "w");
+				assert(!err);
+				fprintf(out_file, "{\n\ttests: [\n");
+			}
+			else
+			{
+				fprintf(out_file, ",\n");
+			}
+			
+			fprintf(out_file, "\t\t{\n\t\t\tduration_s: %d,\n\t\t\tpackets_per_s: %d,\n\t\t\tpacket_size: %d,\n\t\t\tpackets: [", test_config->duration_s, test_config->packets_per_s, test_config->packet_size);
+
+			for (uint32_t i = 0; i < results_count; ++i)
+			{
+				if (i > 0)
+				{
+					fprintf(out_file, ",");
+				}
+				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", results_packet_ids[i], (double)results_packet_ts[i].QuadPart / (double)server_clock_frequency.QuadPart);
+			}
+
+			fprintf(out_file, "\n\t\t\t]\n\t\t}");
+
+			// next config
+			++test_config;
+		}	
 	}
 
-	printf("done");
-	while (true) {}
+	fprintf(out_file, "\n\t]\n}\n");
 
 
     return 0;

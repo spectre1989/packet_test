@@ -50,14 +50,14 @@ int main()
 			int result = recvfrom(sock, recv_buffer, sizeof(recv_buffer), flags, (sockaddr*)&client_address, &client_address_len);
 			if (result != SOCKET_ERROR)
 			{
-				bool got_start_capture = false;
+				bool got_start_test = false;
 
 				switch (recv_buffer[0])
 				{
-				case Client_Msg::Start_Capture:
-					printf("got Start_Capture\n");
+				case Client_Msg::Start_Test:
+					printf("got Start_Test\n");
 					uint32_t num_packets;
-					read_start_capture_packet(recv_buffer, &num_packets);
+					read_start_test_packet(recv_buffer, &num_packets);
 
 					// technically might not be enough if some packets get duplicated, 
 					// but that's rare and if it happens we resize again
@@ -71,13 +71,11 @@ int main()
 						results_ts = new LARGE_INTEGER[results_capacity];
 					}
 					
-					got_start_capture = true;
+					got_start_test = true;
 					break;
-
-					// todo(jbr) unexpected cases
 				}
 
-				if (got_start_capture)
+				if (got_start_test)
 				{
 					break;
 				}
@@ -92,25 +90,25 @@ int main()
 			}
 		}
 
-		// doing capture
+		// doing test
 		results_count = 0;
-		uint32_t packet_size = create_capture_started_packet(send_buffer, clock_frequency);
+		uint32_t packet_size = create_test_started_packet(send_buffer, clock_frequency);
 		send_packet(sock, send_buffer, packet_size, &client_address);
-		printf("sent Capture_Started\n");
-		LARGE_INTEGER time_capture_started_was_sent;
-		QueryPerformanceCounter(&time_capture_started_was_sent);
+		printf("sent Test_Started\n");
+		LARGE_INTEGER time_test_started_was_sent;
+		QueryPerformanceCounter(&time_test_started_was_sent);
 		LARGE_INTEGER time_first_test_packed_received;
 		bool has_received_first_test_packed = false;
 		LARGE_INTEGER time_last_test_packet_received;
-		bool end_capture_received = false;
+		bool end_test_received = false;
+		LARGE_INTEGER timeout_timer = time_test_started_was_sent;
+		bool timed_out = false;
 		while (true)
 		{
 			if (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &client_address))
 			{
 				switch (recv_buffer[0])
 				{
-					// todo(jbr) unexpected cases
-
 				case Client_Msg::Test_Packet:
 					LARGE_INTEGER now;
 					QueryPerformanceCounter(&now);
@@ -148,27 +146,49 @@ int main()
 					results_ids[results_count] = id;
 					results_ts[results_count].QuadPart = now.QuadPart - time_first_test_packed_received.QuadPart;
 					++results_count;
+
+					timeout_timer = now;
 					
 					break;
 
-				case Client_Msg::End_Capture:
-					printf("got End_Capture\n");
-					end_capture_received = true;
+				case Client_Msg::End_Test:
+					printf("got End_Test\n");
+					end_test_received = true;
+					QueryPerformanceCounter(&timeout_timer);
 					break;
+
+				// Ignore Start_Test or Ack_Packet, they'll just be 
+				// out-of-order packets we don't care about by this point
 				}
 			}
 
-			if (results_count == 0 && time_since_s(time_capture_started_was_sent, clock_frequency) > 5.0f)
+			if (time_since_s(timeout_timer, clock_frequency) > 30.0f)
 			{
-				send_packet(sock, send_buffer, packet_size, &client_address);
-				printf("sent Capture_Started\n");
-				QueryPerformanceCounter(&time_capture_started_was_sent);
+				timed_out = true;
+				printf("timed out\n");
+				break;
 			}
 
-			if (end_capture_received && time_since_s(time_last_test_packet_received, clock_frequency) > 5.0f)
+			if (results_count == 0)
+			{
+
+				if (time_since_s(time_test_started_was_sent, clock_frequency) > 5.0f)
+				{
+					send_packet(sock, send_buffer, packet_size, &client_address);
+					printf("sent Test_Started\n");
+					QueryPerformanceCounter(&time_test_started_was_sent);
+				}
+			}
+
+			if (end_test_received && time_since_s(time_last_test_packet_received, clock_frequency) > 5.0f)
 			{
 				break;
 			}
+		}
+
+		if (timed_out)
+		{
+			continue;
 		}
 
 		// sending results
@@ -183,6 +203,8 @@ int main()
 		{
 			batch_acks[i] = false;
 		}
+		
+		QueryPerformanceCounter(&timeout_timer);
 		while (true)
 		{
 			bool all_acked = true;
@@ -211,13 +233,18 @@ int main()
 				break;
 			}
 
-			Sleep(1000);
+			if (time_since_s(timeout_timer, clock_frequency) > 30.0f)
+			{
+				printf("timed out\n");
+				break;
+			}
 
+			Sleep(1000);
+			
 			while (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &client_address))
 			{
 				switch (recv_buffer[0])
 				{
-					// todo(jbr) unexpected cases
 				case Client_Msg::Ack_Results:
 					uint32_t batch_id;
 					read_ack_results_packet(recv_buffer, &batch_id);
@@ -225,7 +252,19 @@ int main()
 					batch_acks[batch_id] = true;
 
 					printf("batch %d/%d acked\n", batch_id + 1, num_batches);
+
+					QueryPerformanceCounter(&timeout_timer);
 					break;
+
+				case Client_Msg::Start_Test:
+					// this likely means an ack got lost, and now the client is starting a new test
+					for (uint32_t i = 0; i < num_batches; ++i)
+					{
+						batch_acks[i] = true;
+					}
+					break;
+
+					// Test_Packet and End_Test can be safely ignored
 				}
 			}
 		}
