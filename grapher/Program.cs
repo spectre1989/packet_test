@@ -32,7 +32,7 @@ namespace grapher
                     packets_delivered[i] = false;
                 }
 
-                writer.WriteLine(string.Format("var data{0} = google.visualization.arrayToDataTable([['Packet Number', 'Delivered', 'Dropped']", test_i));
+                writer.WriteLine(string.Format("var data{0} = google.visualization.arrayToDataTable([['Packet Number', {{label: 'Delivered', type: 'number'}}, {{label: 'Dropped', type: 'number'}}]", test_i));
 
                 // delivered packets
                 JArray packets = test["packets"] as JArray;
@@ -59,9 +59,9 @@ namespace grapher
                     }
                 }
                 
-                writer.WriteLine(string.Format("]);var options{4} = {{title: '{0} packets per second for {1} seconds, {2} bytes per packet',hAxis: {{ title: 'Packet Number', minValue: 1, maxValue: {3}}},vAxis: {{ title: 'Time (seconds)', minValue: 0}},legend: 'none'}};var chart{4} = new google.visualization.ScatterChart(document.getElementById('chart{4}_div')); chart{4}.draw(data{4}, options{4}); ", packets_per_s, duration_s, packet_size, num_packets, test_i));
+                writer.WriteLine(string.Format("]);var options{4} = {{title: '{0} packets per second for {1} seconds, {2} bytes per packet',hAxis: {{ title: 'Packet Number', minValue: 1, maxValue: {3}}}, vAxis: {{ title: 'Time (seconds)', minValue: 0}}, legend: 'none', pointSize: 1}};var chart{4} = new google.visualization.ScatterChart(document.getElementById('chart{4}_div')); chart{4}.draw(data{4}, options{4}); ", packets_per_s, duration_s, packet_size, num_packets, test_i));
 
-                divs += string.Format("<div id = \"chart{0}_div\" style=\"width: 900px; height: 500px; \"></div>", test_i);
+                divs += string.Format("<div id = \"chart{0}_div\" style=\"width: 100%; height: 800px; \"></div>", test_i);
             }
 
             writer.WriteLine(string.Format("}}</script></head><body>{0}</body></html>", divs));
