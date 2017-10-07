@@ -2,3 +2,5 @@
 client/x64/Debug/
 server/x64/Debug/
 x64/Debug/
+grapher/bin/
+grapher/obj/
