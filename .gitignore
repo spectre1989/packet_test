@@ -4,3 +4,6 @@ server/x64/Debug/
 x64/Debug/
 grapher/bin/
 grapher/obj/
+client/x64/Release/
+server/x64/Release/
+x64/Release/
