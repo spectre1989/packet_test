@@ -4,10 +4,107 @@
 #include "common.h"
 
 
-
-
-int main()
+static bool get_arg(int argc, const char** argv, int* i, const char* match)
 {
+	if (strcmp(argv[*i], match) == 0)
+	{
+		++(*i);
+		if (*i < argc)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int main(int argc, const char** argv)
+{
+	struct Test_Config
+	{
+		uint32_t duration_s;
+		uint32_t packets_per_s;
+		uint32_t packet_size;
+	};
+
+	const char* server_ip = "127.0.0.1";
+	uint16_t port = c_port;
+	const char* out_file_name = "results.json";
+	Test_Config* test_configs = 0;
+	uint32_t num_tests = 0;
+
+	const char* c_help_text = "type client.exe ? or client.exe help for instructions\n";
+	for (int i = 1; i < argc; ++i)
+	{
+		if (get_arg(argc, argv, &i, "-s"))
+		{
+			server_ip = argv[i];
+		}
+		else if (get_arg(argc, argv, &i, "-p"))
+		{
+			sscanf_s(argv[i], "%hu", &port);
+		}
+		else if (get_arg(argc, argv, &i, "-o"))
+		{
+			out_file_name = argv[i];
+		}
+		else if (get_arg(argc, argv, &i, "-t"))
+		{
+			++num_tests;
+		}
+		else if (strcmp(argv[i], "?") == 0 || strcmp(argv[i], "help"))
+		{
+			printf("args:\n-s: server ip (default 127.0.0.1)\n-p: server port (default %hu)\n-o: output file name (default results.json)\n-t: test (duration(seconds),packets per second,packet size in bytes)\nexample: client.exe -s 1.2.3.4 -p 7777 -o out.json -t (30,30,256) -t (30,15,512) -t (30,1,1024)\n", c_port);
+			return 0;
+		}
+		else
+		{
+			printf("unexpected arg %s\n", argv[i]);
+			printf(c_help_text);
+			return 0;
+		}
+	}
+
+	if (num_tests == 0)
+	{
+		printf("no tests");
+		printf(c_help_text);
+		return 0;
+	}
+
+	LARGE_INTEGER server_clock_frequency;
+	uint32_t* results_packet_ids = 0;
+	LARGE_INTEGER* results_packet_ts = 0;
+	uint32_t results_capacity = 0;
+	uint32_t results_count = 0;
+	bool* results_batches_received = 0;
+	uint32_t results_batches_received_capacity = 0;
+
+	test_configs = new Test_Config[num_tests];
+	Test_Config* test_config_iter = &test_configs[0];
+	for (int i = 1; i < argc; ++i)
+	{
+		if (get_arg(argc, argv, &i, "-t"))
+		{
+			sscanf_s(argv[i], "(%u,%u,%u)", &test_config_iter->duration_s, &test_config_iter->packets_per_s, &test_config_iter->packet_size);
+
+			uint32_t num_packets = test_config_iter->packets_per_s * test_config_iter->duration_s;
+			uint32_t num_batches_needed = num_batches_needed_for_num_results(num_packets);
+
+			if (num_batches_needed > results_batches_received_capacity)
+			{
+				results_batches_received_capacity = num_batches_needed;
+				results_capacity = results_batches_received_capacity * c_num_results_per_batch;
+			}
+
+			test_config_iter++;
+		}
+	}
+
+	results_packet_ids = new uint32_t[results_capacity];
+	results_packet_ts = new LARGE_INTEGER[results_capacity];
+	results_batches_received = new bool[results_batches_received_capacity];
+
 	srand((unsigned int)time(0));
 
 	WSADATA wsa_data;
@@ -28,51 +125,16 @@ int main()
 
 	sockaddr_in server_address;
 	server_address.sin_family = AF_INET;
-	server_address.sin_addr.S_un.S_un_b.s_b1 = 127;
-	server_address.sin_addr.S_un.S_un_b.s_b2 = 0;
-	server_address.sin_addr.S_un.S_un_b.s_b3 = 0;
-	server_address.sin_addr.S_un.S_un_b.s_b4 = 1;
-	server_address.sin_port = htons(c_port);
-
-	struct Test_Config
-	{
-		uint32_t duration_s;
-		uint32_t packets_per_s;
-		uint32_t packet_size;
-	};
+	server_address.sin_addr.S_un.S_addr = inet_addr(server_ip);
+	server_address.sin_port = htons(port);
 
 	char send_buffer[2048];
 	char recv_buffer[2048];
-	LARGE_INTEGER server_clock_frequency;
 
-	uint32_t* results_packet_ids = 0;
-	LARGE_INTEGER* results_packet_ts = 0;
-	uint32_t results_capacity = 0;
-	uint32_t results_count = 0;
-	bool* results_batches_received = 0;
-	uint32_t results_batches_received_capacity = 0;
-
-	Test_Config test_configs[4] = {{10, 10, 32},{10, 20, 32},{10, 30, 32},{10, 40, 32}};
-	uint32_t num_test_configs = 4;
 	FILE* out_file = 0;
-
-	for (uint32_t i = 0; i < num_test_configs; ++i)
-	{
-		uint32_t num_packets = test_configs[i].packets_per_s * test_configs[i].duration_s;
-		uint32_t num_batches_needed = num_batches_needed_for_num_results(num_packets);
-
-		if (num_batches_needed > results_batches_received_capacity)
-		{
-			results_batches_received_capacity = num_batches_needed;
-			results_capacity = results_batches_received_capacity * c_num_results_per_batch;
-		}
-	}
-	results_packet_ids = new uint32_t[results_capacity];
-	results_packet_ts = new LARGE_INTEGER[results_capacity];
-	results_batches_received = new bool[results_batches_received_capacity];
 	
 	Test_Config* test_config = &test_configs[0];
-	Test_Config* test_config_end = &test_configs[num_test_configs];
+	Test_Config* test_config_end = &test_configs[num_tests];
 	while (test_config != test_config_end)
 	{
 		float packet_interval_s = 1.0f / (float)test_config->packets_per_s;
@@ -261,7 +323,7 @@ int main()
 			// write results
 			if (!out_file)
 			{
-				errno_t err = fopen_s(&out_file, "results.json", "w");
+				errno_t err = fopen_s(&out_file, out_file_name, "w");
 				assert(!err);
 				fprintf(out_file, "{\n\ttests: [\n");
 			}

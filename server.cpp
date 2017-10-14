@@ -6,8 +6,24 @@
 
 
 
-int main()
+int main(int argc, const char** argv)
 {
+	uint16_t port = c_port;
+
+	for (int i = 1; i < argc; ++i)
+	{
+		if ((i + 1) < argc && strcmp(argv[i], "-p") == 0)
+		{
+			sscanf_s(argv[i + 1], "%hu", &port);
+			i += 2;
+		}
+		else if(strcmp(argv[i], "?") == 0 || strcmp(argv[i], "help"))
+		{
+			printf("-p: port (default 9876)\ne.g. server.exe -p 7777\n");
+			return 0;
+		}
+	}
+
 	WSADATA wsa_data;
 	int result = WSAStartup(0x202, &wsa_data);
 	assert(result == 0);
@@ -21,7 +37,7 @@ int main()
 	sockaddr_in local_address;
 	local_address.sin_family = AF_INET;
 	local_address.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
-	local_address.sin_port = htons(c_port);
+	local_address.sin_port = htons(port);
 	bind(sock, (sockaddr*)&local_address, sizeof(local_address));
 
 	LARGE_INTEGER clock_frequency;
