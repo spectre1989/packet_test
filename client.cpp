@@ -351,6 +351,7 @@ int main(int argc, const char** argv)
 	}
 
 	fprintf(out_file, "\n\t]\n}\n");
+	fflush(out_file);
 
 
     return 0;
