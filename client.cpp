@@ -137,7 +137,7 @@ int main(int argc, const char** argv)
 	Test_Config* test_config_end = &test_configs[num_tests];
 	while (test_config != test_config_end)
 	{
-		float packet_interval_s = 1.0f / (float)test_config->packets_per_s;
+		LONGLONG packet_interval_in_counts = clock_frequency.QuadPart / (LONGLONG)test_config->packets_per_s;
 		const uint32_t num_packets = test_config->duration_s * test_config->packets_per_s;
 
 		// starting test
@@ -182,12 +182,11 @@ int main(int argc, const char** argv)
 		// doing test
 		uint32_t packet_id = 0;
 		packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
+		LARGE_INTEGER t;
+		QueryPerformanceCounter(&t);
 		while (true)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
-
-			LARGE_INTEGER t;
-			QueryPerformanceCounter(&t);
 
 			++packet_id;
 			if (packet_id == num_packets)
@@ -199,14 +198,18 @@ int main(int argc, const char** argv)
 
 			while (true)
 			{
-				float time_since_last_packet_sent_s = time_since_s(t, clock_frequency);
-				float time_until_next_packet_s = packet_interval_s - time_since_last_packet_sent_s;
-				
-				if (time_until_next_packet_s > 0.0f)
+				LARGE_INTEGER now;
+				QueryPerformanceCounter(&now);
+
+				LONGLONG time_since_last_packet_sent_in_counts = now.QuadPart - t.QuadPart;
+
+				if (time_since_last_packet_sent_in_counts < packet_interval_in_counts)
 				{
 					if (sleep_granularity_was_set)
 					{
-						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0f); // intentional rounding down, don't want to oversleep
+						LONGLONG counts_until_next_packet = packet_interval_in_counts - time_since_last_packet_sent_in_counts;
+						double time_until_next_packet_s = (double)counts_until_next_packet / (double)clock_frequency.QuadPart;
+						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0); // intentional rounding down, don't want to oversleep
 						if (time_until_next_packet_ms > 0)
 						{
 							Sleep(time_until_next_packet_ms);
@@ -215,6 +218,7 @@ int main(int argc, const char** argv)
 				}
 				else
 				{
+					t.QuadPart += packet_interval_in_counts;
 					break;
 				}
 			}
