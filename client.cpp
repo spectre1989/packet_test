@@ -118,7 +118,7 @@ int main(int argc, const char** argv)
 	assert(result != SOCKET_ERROR);
 
 	UINT period_ms = 1;
-	bool sleep_granularity_was_set = timeBeginPeriod(period_ms) == TIMERR_NOERROR;
+	bool sleep_granularity_was_set = false;// timeBeginPeriod(period_ms) == TIMERR_NOERROR;
 
 	LARGE_INTEGER clock_frequency;
 	QueryPerformanceFrequency(&clock_frequency);
@@ -180,6 +180,7 @@ int main(int argc, const char** argv)
 
 		
 		// doing test
+		LARGE_INTEGER* debugtimes = new LARGE_INTEGER[num_packets];
 		uint32_t packet_id = 0;
 		packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
 		LARGE_INTEGER t;
@@ -187,6 +188,8 @@ int main(int argc, const char** argv)
 		while (true)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
+
+			debugtimes[packet_id] = t;
 
 			++packet_id;
 			if (packet_id == num_packets)
@@ -345,6 +348,19 @@ int main(int argc, const char** argv)
 					fprintf(out_file, ",");
 				}
 				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", results_packet_ids[i], (double)results_packet_ts[i].QuadPart / (double)server_clock_frequency.QuadPart);
+			}
+
+			fprintf(out_file, "\n\t\t\t]\n\t\t}");
+
+			fprintf(out_file, ",\n\t\t{\n\t\t\tduration_s: %d,\n\t\t\tpackets_per_s: %d,\n\t\t\tpacket_size: %d,\n\t\t\tpackets: [", test_config->duration_s, test_config->packets_per_s, test_config->packet_size);
+
+			for (uint32_t i = 0; i < num_packets; ++i)
+			{
+				if (i > 0)
+				{
+					fprintf(out_file, ",");
+				}
+				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", i, (double)(debugtimes[i].QuadPart - debugtimes[0].QuadPart) / (double)clock_frequency.QuadPart);
 			}
 
 			fprintf(out_file, "\n\t\t\t]\n\t\t}");
