@@ -38,11 +38,23 @@ namespace grapher
 
         static void CreateReport(string path)
         {
-            FileStream file_stream = File.OpenWrite(Path.ChangeExtension(path, "html"));
-            StreamWriter writer = new StreamWriter(file_stream);
+            string extension = Path.GetExtension(path);
+            if(extension != ".txt" && extension != ".json")
+            {
+                Console.WriteLine("ignoring " + path);
+                return;
+            }
+
+            string out_file_path = Path.ChangeExtension(path, "html");
+            if(File.Exists(out_file_path))
+            {
+                File.Delete(out_file_path);
+            }
+            FileStream out_file_stream = File.OpenWrite(out_file_path);
+            StreamWriter writer = new StreamWriter(out_file_stream);
             writer.Write("<html><head><script type = \"text/javascript\" src = \"https://www.gstatic.com/charts/loader.js\"></script><script type = \"text/javascript\">google.charts.load('current', { 'packages':['corechart'] });google.charts.setOnLoadCallback(drawChart); function drawChart(){");
 
-            string divs = "";
+            string divs = "<h1>" + Path.GetFileNameWithoutExtension(path) + "</h1>";
 
             JObject root = JObject.Parse(new StreamReader(File.OpenRead(path)).ReadToEnd());
             JArray tests = root["tests"] as JArray;
@@ -53,9 +65,11 @@ namespace grapher
                 UInt32 packets_per_s = test["packets_per_s"].ToObject<UInt32>();
                 UInt32 packet_size = test["packet_size"].ToObject<UInt32>();
                 UInt32 num_packets = duration_s * packets_per_s;
-                float packet_interval_s = 1.0f / (float)packets_per_s;
+                double packet_interval_s = 1.0 / packets_per_s;
+
 
                 bool[] packets_delivered = new bool[num_packets];
+                double[] packet_timestamps = new double[num_packets];
                 for (int i = 0; i < num_packets; ++i)
                 {
                     packets_delivered[i] = false;
@@ -63,28 +77,20 @@ namespace grapher
                 UInt32 num_dropped_packets = 0;
                 UInt32 num_duplicate_packets = 0;
 
-                writer.Write(string.Format("var data{0} = google.visualization.arrayToDataTable([['Packet Number', {{label: 'Delivered', type: 'number'}}]", test_i));
-
-                // delivered packets
                 JArray packets = test["packets"] as JArray;
-                if (packets.Count > 0)
+                foreach (JObject packet in packets)
                 {
-                    float t_offset = packets[0]["id"].ToObject<UInt32>() * packet_interval_s;
+                    UInt32 id = packet["id"].ToObject<UInt32>();
+                    double t = packet["t"].ToObject<double>();
 
-                    foreach (JObject packet in packets)
+                    if (!packets_delivered[id])
                     {
-                        UInt32 id = packet["id"].ToObject<UInt32>();
-                        float t = packet["t"].ToObject<float>() + t_offset;
-                        writer.Write(string.Format(",[{0}, {1}]", id + 1, t));
-
-                        if (!packets_delivered[id])
-                        {
-                            packets_delivered[id] = true;
-                        }
-                        else
-                        {
-                            ++num_duplicate_packets;
-                        }
+                        packets_delivered[id] = true;
+                        packet_timestamps[id] = t;
+                    }
+                    else
+                    {
+                        ++num_duplicate_packets;
                     }
                 }
 
@@ -99,14 +105,119 @@ namespace grapher
                 float packet_loss_perc = (num_dropped_packets * 100) / (float)num_packets;
                 float packet_dupe_perc = (num_duplicate_packets * 100) / (float)num_packets;
 
-                writer.Write(string.Format("]);var options{4} = {{title: '{0} packets per second for {1} seconds, {2} bytes per packet, {5} packets lost({6}%), {7} packets duplicated({8}%)',hAxis: {{ title: 'Packet Number', minValue: 1, maxValue: {3}}}, vAxis: {{ title: 'Time (seconds)', minValue: 0}}, legend: 'none', pointSize: 1}};var chart{4} = new google.visualization.ScatterChart(document.getElementById('chart{4}_div')); chart{4}.draw(data{4}, options{4}); ", packets_per_s, duration_s, packet_size, num_packets, test_i, num_dropped_packets, packet_loss_perc, num_duplicate_packets, packet_dupe_perc));
 
-                divs += string.Format("<div id = \"chart{0}_div\" style=\"width: 100%; height: 800px; \"></div>", test_i);
+                // Title
+                divs += string.Format("<h2>{0} packets per second for {1} seconds, {2} bytes per packet ({3} bytes per sec), {4} packets lost({5}%), {6} packets duplicated({7}%)</h2>",
+                    packets_per_s, duration_s, packet_size, duration_s * packet_size, num_dropped_packets, packet_loss_perc, num_duplicate_packets, packet_dupe_perc);
+
+                // delivered packets
+                Chart chart = new Chart();
+                chart.name = string.Format("deliveredPackets{0}", test_i);
+                chart.x_axis = "Packet Number";
+                chart.y_axis = "Time (sec)";
+                chart.title = "Delivered Packets";
+
+                BeginChart(ref chart, writer);
+
+                for (int i = 0; i < num_packets; ++i)
+                {
+                    if (packets_delivered[i])
+                    {
+                        writer.Write(string.Format(",[{0}, {1}]", i, packet_timestamps[i]));
+                    }
+                }
+
+                EndChart(ref chart, writer, ref divs);
+
+                // dropped packets chart
+                if (num_dropped_packets > 0)
+                {
+                    chart.name = string.Format("droppedPackets{0}", test_i);
+                    chart.title = "Dropped Packets";
+
+                    BeginChart(ref chart, writer);
+
+                    for (int i = 0; i < num_packets; ++i)
+                    {
+                        if (!packets_delivered[i])
+                        {
+                            writer.Write(string.Format(",[{0}, {1}]", i, i * packet_interval_s));
+                        }
+                    }
+
+                    EndChart(ref chart, writer, ref divs);
+                }
+
+                // jitter chart
+                chart.name = string.Format("jitter{0}", test_i);
+                chart.title = "Jitter";
+                chart.y_axis = "Time (ms)";
+
+                BeginChart(ref chart, writer);
+
+                // compute average delta, because first packet could have jitter that throws the whole graph off
+                double inv_num_packets = 1.0 / num_packets;
+                double avg_delta_s = 0.0;
+                for (int i = 0; i < num_packets; ++i)
+                {
+                    if(packets_delivered[i])
+                    {
+                        double expected_timestamp_s = i * packet_interval_s;
+                        double delta_s = packet_timestamps[i] - expected_timestamp_s;
+                        avg_delta_s += delta_s * inv_num_packets;
+                        writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(delta_s) * 1000.0));
+                    }
+                }
+
+                EndChart(ref chart, writer, ref divs);
+
+                // adjusted jitter chart
+                chart.name = string.Format("adustedJitter{0}", test_i);
+                chart.title = "Adjusted Jitter";
+                chart.y_axis = "Time (ms)";
+
+                BeginChart(ref chart, writer);
+
+                // compute average delta, because first packet could have jitter that throws the whole graph off
+                for (int i = 0; i < num_packets; ++i)
+                {
+                    if (packets_delivered[i])
+                    {
+                        double expected_timestamp_s = i * packet_interval_s;
+                        double adjusted_delta_s = packet_timestamps[i] - expected_timestamp_s - avg_delta_s;
+                        writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(adjusted_delta_s) * 1000.0));
+                    }
+                }
+
+                EndChart(ref chart, writer, ref divs);
             }
 
-            writer.Write(string.Format("}}</script></head><body>{0}</body></html>", divs));
+            writer.Write("}</script></head><body>" + divs + "</body></html>");
             writer.Flush();
-            file_stream.Close();
+            out_file_stream.Close();
+        }
+
+        struct Chart
+        {
+            public string name;
+            public string x_axis;
+            public string y_axis;
+            public string title;
+        }
+
+        static void BeginChart(ref Chart chart, StreamWriter writer)
+        {
+            writer.Write(string.Format("var {0}_data = google.visualization.arrayToDataTable([['{1}', {{label: '{2}', type: 'number'}}]", chart.name, chart.x_axis, chart.y_axis));
+        }
+
+        static void EndChart(ref Chart chart, StreamWriter writer, ref string divs)
+        {
+            writer.Write("]);");
+            writer.Write(string.Format("var {0}_options = {{title: '{1}',hAxis: {{title: '{2}'}}, vAxis: {{title: '{3}'}}, legend: 'none', pointSize: 1}};", chart.name, chart.title, chart.x_axis, chart.y_axis));
+            writer.Write(string.Format("var {0}_chart = new google.visualization.ScatterChart(document.getElementById('{0}_div'));", chart.name));
+            writer.Write(string.Format("{0}_chart.draw({0}_data, {0}_options); ", chart.name));
+
+            divs += string.Format("<div id = \"{0}_div\" style=\"width: 100%; height: 800px; \"></div>", chart.name);
         }
     }
 }
