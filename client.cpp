@@ -118,7 +118,7 @@ int main(int argc, const char** argv)
 	assert(result != SOCKET_ERROR);
 
 	UINT period_ms = 1;
-	bool sleep_granularity_was_set = false;// timeBeginPeriod(period_ms) == TIMERR_NOERROR;
+	bool sleep_granularity_was_set = timeBeginPeriod(period_ms) == TIMERR_NOERROR;
 
 	LARGE_INTEGER clock_frequency;
 	QueryPerformanceFrequency(&clock_frequency);
@@ -137,7 +137,6 @@ int main(int argc, const char** argv)
 	Test_Config* test_config_end = &test_configs[num_tests];
 	while (test_config != test_config_end)
 	{
-		LONGLONG packet_interval_in_counts = clock_frequency.QuadPart / (LONGLONG)test_config->packets_per_s;
 		const uint32_t num_packets = test_config->duration_s * test_config->packets_per_s;
 
 		// starting test
@@ -180,16 +179,15 @@ int main(int argc, const char** argv)
 
 		
 		// doing test
-		LARGE_INTEGER* debugtimes = new LARGE_INTEGER[num_packets];
 		uint32_t packet_id = 0;
 		packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
-		LARGE_INTEGER t;
-		QueryPerformanceCounter(&t);
+		LARGE_INTEGER start_time_counts;
+		QueryPerformanceCounter(&start_time_counts);
+		double time_s = 0.0;
+		double packet_interval_s = 1.0 / (double)test_config->packets_per_s;
 		while (true)
 		{
 			send_packet(sock, send_buffer, packet_size, &server_address);
-
-			debugtimes[packet_id] = t;
 
 			++packet_id;
 			if (packet_id == num_packets)
@@ -199,29 +197,31 @@ int main(int argc, const char** argv)
 
 			create_test_packet(send_buffer, packet_id, test_config->packet_size);
 
+			// wait until next packet
+			time_s += packet_interval_s;
+			LONGLONG target_counts_since_start = (LONGLONG)(clock_frequency.QuadPart * time_s);
 			while (true)
 			{
 				LARGE_INTEGER now;
 				QueryPerformanceCounter(&now);
 
-				LONGLONG time_since_last_packet_sent_in_counts = now.QuadPart - t.QuadPart;
-
-				if (time_since_last_packet_sent_in_counts < packet_interval_in_counts)
+				LONGLONG counts_since_start = now.QuadPart - start_time_counts.QuadPart;
+				
+				if (counts_since_start < target_counts_since_start)
 				{
 					if (sleep_granularity_was_set)
 					{
-						LONGLONG counts_until_next_packet = packet_interval_in_counts - time_since_last_packet_sent_in_counts;
+						LONGLONG counts_until_next_packet = target_counts_since_start - counts_since_start;
 						double time_until_next_packet_s = (double)counts_until_next_packet / (double)clock_frequency.QuadPart;
-						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0); // intentional rounding down, don't want to oversleep
-						if (time_until_next_packet_ms > 0)
+						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0);
+						if (time_until_next_packet_ms > 5) // with a quantum of 1ms the sleep can be 2 or 3ms over
 						{
-							Sleep(time_until_next_packet_ms);
+							Sleep(time_until_next_packet_ms - 5);
 						}
 					}
 				}
 				else
 				{
-					t.QuadPart += packet_interval_in_counts;
 					break;
 				}
 			}
@@ -348,19 +348,6 @@ int main(int argc, const char** argv)
 					fprintf(out_file, ",");
 				}
 				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", results_packet_ids[i], (double)results_packet_ts[i].QuadPart / (double)server_clock_frequency.QuadPart);
-			}
-
-			fprintf(out_file, "\n\t\t\t]\n\t\t}");
-
-			fprintf(out_file, ",\n\t\t{\n\t\t\tduration_s: %d,\n\t\t\tpackets_per_s: %d,\n\t\t\tpacket_size: %d,\n\t\t\tpackets: [", test_config->duration_s, test_config->packets_per_s, test_config->packet_size);
-
-			for (uint32_t i = 0; i < num_packets; ++i)
-			{
-				if (i > 0)
-				{
-					fprintf(out_file, ",");
-				}
-				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", i, (double)(debugtimes[i].QuadPart - debugtimes[0].QuadPart) / (double)clock_frequency.QuadPart);
 			}
 
 			fprintf(out_file, "\n\t\t\t]\n\t\t}");
