@@ -119,11 +119,19 @@ namespace grapher
 
                 BeginChart(ref chart, writer);
 
+                const uint c_max_points_per_graph = 1000;
+                uint num_delivered_packets = num_packets - num_dropped_packets;
+                uint stride = num_delivered_packets / c_max_points_per_graph;
+                uint stride_counter = 0;
                 for (int i = 0; i < num_packets; ++i)
                 {
                     if (packets_delivered[i])
                     {
-                        writer.Write(string.Format(",[{0}, {1}]", i, packet_timestamps[i]));
+                        if(stride_counter == 0)
+                        {
+                            writer.Write(string.Format(",[{0}, {1}]", i, packet_timestamps[i]));
+                        }
+                        stride_counter = (stride_counter + 1) % stride;
                     }
                 }
 
@@ -137,11 +145,17 @@ namespace grapher
 
                     BeginChart(ref chart, writer);
 
+                    stride = num_dropped_packets / c_max_points_per_graph;
+                    stride_counter = 0;
                     for (int i = 0; i < num_packets; ++i)
                     {
                         if (!packets_delivered[i])
                         {
-                            writer.Write(string.Format(",[{0}, {1}]", i, i * packet_interval_s));
+                            if (stride_counter == 0)
+                            {
+                                writer.Write(string.Format(",[{0}, {1}]", i, i * packet_interval_s));
+                            }
+                            stride_counter = (stride_counter + 1) % stride;
                         }
                     }
 
@@ -158,14 +172,21 @@ namespace grapher
                 // compute average delta, because first packet could have jitter that throws the whole graph off
                 double inv_num_packets = 1.0 / num_packets;
                 double avg_delta_s = 0.0;
+                stride = num_delivered_packets / c_max_points_per_graph;
+                stride_counter = 0;
                 for (int i = 0; i < num_packets; ++i)
                 {
-                    if(packets_delivered[i])
+                    if (packets_delivered[i])
                     {
                         double expected_timestamp_s = i * packet_interval_s;
                         double delta_s = packet_timestamps[i] - expected_timestamp_s;
                         avg_delta_s += delta_s * inv_num_packets;
-                        writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(delta_s) * 1000.0));
+
+                        if (stride_counter == 0)
+                        {
+                            writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(delta_s) * 1000.0));
+                        }
+                        stride_counter = (stride_counter + 1) % stride;
                     }
                 }
 
@@ -178,14 +199,18 @@ namespace grapher
 
                 BeginChart(ref chart, writer);
 
-                // compute average delta, because first packet could have jitter that throws the whole graph off
+                stride_counter = 0;
                 for (int i = 0; i < num_packets; ++i)
                 {
                     if (packets_delivered[i])
                     {
-                        double expected_timestamp_s = i * packet_interval_s;
-                        double adjusted_delta_s = packet_timestamps[i] - expected_timestamp_s - avg_delta_s;
-                        writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(adjusted_delta_s) * 1000.0));
+                        if (stride_counter == 0)
+                        {
+                            double expected_timestamp_s = i * packet_interval_s;
+                            double adjusted_delta_s = packet_timestamps[i] - expected_timestamp_s - avg_delta_s;
+                            writer.Write(string.Format(",[{0}, {1}]", i, Math.Abs(adjusted_delta_s) * 1000.0));
+                        }
+                        stride_counter = (stride_counter + 1) % stride;
                     }
                 }
 
