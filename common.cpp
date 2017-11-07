@@ -16,39 +16,31 @@ uint32_t num_batches_needed_for_num_results(uint32_t num_results)
 	return (num_results / c_num_results_per_batch) + ((num_results % c_num_results_per_batch) ? 1 : 0); // if results per batch doesn't exactly divide in to results count, then we need an extra batch
 }
 
-#ifdef FAKE_PACKET_LOSS
-static bool s_has_done_a_send = false;
-#endif
-
 void send_packet(SOCKET sock, char* packet, int packet_size, sockaddr_in* address)
 {
-	// todo(jbr) remove this when done with it
-#ifdef FAKE_PACKET_LOSS
-	if ((rand() % 100) < 50)
-	{
-		return;
-	}
-
-	s_has_done_a_send = true;
-#endif
-
 	int flags = 0;
-	int result = sendto(sock, packet, packet_size, flags, (sockaddr*)address, sizeof(*address));
-	if (result == SOCKET_ERROR)
+	while (true)
 	{
-		printf("sendto error %d\n", WSAGetLastError());
+		int result = sendto(sock, packet, packet_size, flags, (sockaddr*)address, sizeof(*address));
+		if (result == SOCKET_ERROR)
+		{
+			int error = WSAGetLastError();
+
+			printf("sendto error %d\n", error);
+
+			if (error == WSAEWOULDBLOCK ||
+				error == WSAENOBUFS)
+			{
+				continue;
+			}
+		}
+
+		break;
 	}
 }
 
 int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* address)
 {
-#ifdef FAKE_PACKET_LOSS
-	if (!s_has_done_a_send)
-	{
-		return 0;
-	}
-#endif
-
 	int flags = 0;
 	sockaddr_in from_address;
 	int from_address_len = sizeof(from_address);
@@ -67,13 +59,6 @@ int receive_packet(SOCKET sock, char* buffer, int buffer_size, sockaddr_in* addr
 		if (from_address.sin_addr.S_un.S_addr == address->sin_addr.S_un.S_addr &&
 			from_address.sin_port == address->sin_port)
 		{
-#ifdef FAKE_PACKET_LOSS
-			if ((rand() % 100) < 50)
-			{
-				return 0;
-			}
-#endif
-
 			return result;
 		}
 		else

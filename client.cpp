@@ -67,7 +67,7 @@ int main(int argc, const char** argv)
 
 	if (num_tests == 0)
 	{
-		printf("no tests");
+		printf("no tests\n");
 		printf(c_help_text);
 		return 0;
 	}
