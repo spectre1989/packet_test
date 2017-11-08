@@ -120,9 +120,10 @@ namespace grapher
                 chart.type = "ScatterChart";
                 BeginChart(ref chart, writer);
 
-                const uint c_max_points_per_graph = 1000;
+                const uint c_max_points_per_graph = 16000;
                 uint num_delivered_packets = num_packets - num_dropped_packets;
                 uint stride = Math.Max(1, num_delivered_packets / c_max_points_per_graph);
+                uint chart_width = num_packets / stride;
                 uint stride_counter = 0;
                 for (int i = 0; i < num_packets; ++i)
                 {
@@ -135,7 +136,7 @@ namespace grapher
                         stride_counter = (stride_counter + 1) % stride;
                     }
                 }
-                EndChart(ref chart, writer, ref divs);
+                EndChart(ref chart, writer, ref divs, chart_width);
 
                 // dropped packets chart
                 if (num_dropped_packets > 0)
@@ -157,7 +158,7 @@ namespace grapher
                             stride_counter = (stride_counter + 1) % stride;
                         }
                     }
-                    EndChart(ref chart, writer, ref divs);
+                    EndChart(ref chart, writer, ref divs, chart_width);
                 }
 
                 // jitter chart
@@ -187,7 +188,7 @@ namespace grapher
                         stride_counter = (stride_counter + 1) % stride;
                     }
                 }
-                EndChart(ref chart, writer, ref divs);
+                EndChart(ref chart, writer, ref divs, chart_width);
 
                 // adjusted jitter chart
                 chart.name = string.Format("adustedJitter{0}", test_i);
@@ -208,7 +209,7 @@ namespace grapher
                         stride_counter = (stride_counter + 1) % stride;
                     }
                 }
-                EndChart(ref chart, writer, ref divs);
+                EndChart(ref chart, writer, ref divs, chart_width);
 
                 // jitter chart
                 chart.name = "jitterArea" + test_i.ToString();
@@ -221,7 +222,7 @@ namespace grapher
                 double min_jitter_ms = 0.0;
                 double max_jitter_ms = 0.0;
                 double total_jitter_ms = 0.0;
-                stride = Math.Max(1, num_packets / c_max_points_per_graph);
+                stride = Math.Max(1, num_packets / 16000);
                 for (int i = 0; i < num_packets; ++i)
                 {
                     if (packets_delivered[i])
@@ -253,7 +254,7 @@ namespace grapher
                         total_jitter_ms = 0.0;
                     }
                 }
-                EndChart(ref chart, writer, ref divs);
+                EndChart(ref chart, writer, ref divs, chart_width);
             }
 
             writer.Write("}</script></head><body>" + divs + "</body></html>");
@@ -281,14 +282,14 @@ namespace grapher
             writer.Write("]");
         }
 
-        static void EndChart(ref Chart chart, StreamWriter writer, ref string divs)
+        static void EndChart(ref Chart chart, StreamWriter writer, ref string divs, uint width)
         {
             writer.Write("]);");
             writer.Write(string.Format("var {0}_options = {{title: '{1}',hAxis: {{title: '{2}'}}, vAxis: {{title: '{3}'}}, legend: 'none', pointSize: 1}};", chart.name, chart.title, chart.x_axis, chart.y_axis_title));
             writer.Write(string.Format("var {0}_chart = new google.visualization.{1}(document.getElementById('{0}_div'));", chart.name, chart.type));
             writer.Write(string.Format("{0}_chart.draw({0}_data, {0}_options); ", chart.name));
 
-            divs += string.Format("<div id = \"{0}_div\" style=\"width: 100%; height: 800px; \"></div>", chart.name);
+            divs += string.Format("<div id = \"{0}_div\" style=\"width: {1}px; height: 800px; \"></div>", chart.name, width);
         }
     }
 }
