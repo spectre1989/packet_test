@@ -107,8 +107,8 @@ namespace grapher
 
 
                 // Title
-                divs += string.Format("<h2>{0} packets per second for {1} seconds, {2} bytes per packet ({3} bytes per sec), {4} packets lost({5}%)",
-                    packets_per_s, duration_s, packet_size, duration_s * packet_size, num_dropped_packets, packet_loss_perc);
+                divs += string.Format("<h2>{0} packets per second for {1} seconds, {2} bytes per packet, {3} packets lost({4}%)",
+                    packets_per_s, duration_s, packet_size, num_dropped_packets, packet_loss_perc);
                 if(num_duplicate_packets > 0)
                 {
                     divs += ", " + num_duplicate_packets.ToString() + " packets duplicated(" + packet_dupe_perc.ToString() + "%)";
@@ -145,13 +145,13 @@ namespace grapher
                 chart.series = series.ToArray();
                 BeginChart(ref chart, writer);
 
-                const uint c_max_points_per_graph = 16000;
+                const uint c_max_points_per_graph = 1000;
                 uint num_packets_in_slice = 0;
                 double min_jitter_ms = 0.0;
                 double max_jitter_ms = 0.0;
                 double total_jitter_ms = 0.0;
                 uint num_dropped_packets_in_slice = 0;
-                uint stride = Math.Max(1, num_packets / 16000);
+                uint stride = Math.Max(1, num_packets / c_max_points_per_graph);
                 for (int i = 0; i < num_packets; ++i)
                 {
                     if (packets_delivered[i])
@@ -182,9 +182,9 @@ namespace grapher
                         double avg_jitter_ms = total_jitter_ms;
                         if (num_packets_in_slice > 0)
                         {
-                            total_jitter_ms /= num_packets_in_slice;
+                            avg_jitter_ms /= num_packets_in_slice;
                         }
-
+                        
                         writer.Write(string.Format(",[{0}, {1}, {2}, {3}", i - stride + 1, min_jitter_ms, max_jitter_ms, avg_jitter_ms));
                         if (num_dropped_packets > 0)
                         {
@@ -197,7 +197,7 @@ namespace grapher
                         total_jitter_ms = 0.0;
                     }
                 }
-                uint chart_width = num_packets / stride;
+                uint chart_width = c_max_points_per_graph * 4;
                 EndChart(ref chart, writer, ref divs, chart_width);
             }
 
