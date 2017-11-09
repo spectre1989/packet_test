@@ -20,17 +20,9 @@ static bool get_arg(int argc, const char** argv, int* i, const char* match)
 
 int main(int argc, const char** argv)
 {
-	struct Test_Config
-	{
-		uint32_t duration_s;
-		uint32_t packets_per_s;
-		uint32_t packet_size;
-	};
-
 	const char* server_ip = "127.0.0.1";
 	uint16_t port = c_port;
 	const char* out_file_name = "results.json";
-	Test_Config* test_configs = 0;
 	uint32_t num_tests = 0;
 
 	const char* c_help_text = "type client.exe ? or client.exe help for instructions\n";
@@ -72,38 +64,40 @@ int main(int argc, const char** argv)
 		return 0;
 	}
 
-	LARGE_INTEGER server_clock_frequency;
-	uint32_t* results_packet_ids = 0;
-	LARGE_INTEGER* results_packet_ts = 0;
-	uint32_t results_capacity = 0;
-	uint32_t results_count = 0;
-	bool* results_batches_received = 0;
-	uint32_t results_batches_received_capacity = 0;
+	struct Test_Config
+	{
+		uint32_t duration_s;
+		uint32_t packets_per_s;
+		uint32_t packet_size;
+	};
+	Test_Config* test_configs = new Test_Config[num_tests];
 
-	test_configs = new Test_Config[num_tests];
+	uint32_t num_packets_in_largest_test = 0;
 	Test_Config* test_config_iter = &test_configs[0];
 	for (int i = 1; i < argc; ++i)
 	{
 		if (get_arg(argc, argv, &i, "-t"))
 		{
 			sscanf_s(argv[i], "(%u,%u,%u)", &test_config_iter->duration_s, &test_config_iter->packets_per_s, &test_config_iter->packet_size);
+			
+			if (test_config_iter->packet_size > c_max_packet_size)
+			{
+				test_config_iter->packet_size = c_max_packet_size;
+			}
 
 			uint32_t num_packets = test_config_iter->packets_per_s * test_config_iter->duration_s;
-			uint32_t num_batches_needed = num_batches_needed_for_num_results(num_packets);
 
-			if (num_batches_needed > results_batches_received_capacity)
+			if (num_packets > num_packets_in_largest_test)
 			{
-				results_batches_received_capacity = num_batches_needed;
-				results_capacity = results_batches_received_capacity * c_num_results_per_batch;
+				num_packets_in_largest_test = num_packets;
 			}
 
 			test_config_iter++;
 		}
 	}
 
-	results_packet_ids = new uint32_t[results_capacity];
-	results_packet_ts = new LARGE_INTEGER[results_capacity];
-	results_batches_received = new bool[results_batches_received_capacity];
+	LARGE_INTEGER* packet_sent_ts = new LARGE_INTEGER[num_packets_in_largest_test];
+	LARGE_INTEGER* packet_received_ts = new LARGE_INTEGER[num_packets_in_largest_test];
 
 	srand((unsigned int)time(0));
 
@@ -117,9 +111,6 @@ int main(int argc, const char** argv)
 	result = ioctlsocket(sock, FIONBIO, &enabled);
 	assert(result != SOCKET_ERROR);
 
-	UINT period_ms = 1;
-	bool sleep_granularity_was_set = timeBeginPeriod(period_ms) == TIMERR_NOERROR;
-
 	LARGE_INTEGER clock_frequency;
 	QueryPerformanceFrequency(&clock_frequency);
 
@@ -128,8 +119,8 @@ int main(int argc, const char** argv)
 	server_address.sin_addr.S_un.S_addr = inet_addr(server_ip);
 	server_address.sin_port = htons(port);
 
-	char send_buffer[2048];
-	char recv_buffer[2048];
+	char send_buffer[c_max_packet_size];
+	char recv_buffer[c_max_packet_size];
 
 	FILE* out_file = 0;
 	
@@ -157,7 +148,6 @@ int main(int argc, const char** argv)
 					if (recv_buffer[0] == Server_Msg::Test_Started)
 					{
 						printf("got Test_Started\n");
-						read_test_started_packet(recv_buffer, &server_clock_frequency);
 						got_reply = true;
 						break;
 					}
@@ -179,60 +169,76 @@ int main(int argc, const char** argv)
 
 		
 		// doing test
-		uint32_t packet_id = 0;
-		packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
+		
+		
 		LARGE_INTEGER start_time_counts;
 		QueryPerformanceCounter(&start_time_counts);
-		double time_s = 0.0;
-		double packet_interval_s = 1.0 / (double)test_config->packets_per_s;
-		while (true)
+		for (uint32_t packet_id = 0; packet_id < num_packets; ++packet_id)
 		{
+			packet_size = create_test_packet(send_buffer, packet_id, test_config->packet_size);
+
 			send_packet(sock, send_buffer, packet_size, &server_address);
 
-			++packet_id;
-			if (packet_id == num_packets)
-			{
-				break;
-			}
-
-			create_test_packet(send_buffer, packet_id, test_config->packet_size);
+			QueryPerformanceCounter(&packet_sent_ts[packet_id]);
+			packet_received_ts[packet_id].QuadPart = 0;
 
 			// wait until next packet
-			time_s += packet_interval_s;
-			LONGLONG target_counts_since_start = (LONGLONG)(clock_frequency.QuadPart * time_s);
+			double wait_until_seconds = (double)(packet_id + 1) / (double)test_config->packets_per_s;
+			LONGLONG wait_until_counts = (LONGLONG)(clock_frequency.QuadPart * wait_until_seconds);
 			while (true)
 			{
+				if (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address))
+				{
+					if (recv_buffer[0] == Server_Msg::Test_Packet_Echo)
+					{
+						uint32_t packet_id;
+						read_test_packet_echo(recv_buffer, &packet_id);
+
+						if (!packet_received_ts[packet_id].QuadPart)
+						{
+							QueryPerformanceCounter(&packet_received_ts[packet_id]);
+						}
+					}
+				}
+
 				LARGE_INTEGER now;
 				QueryPerformanceCounter(&now);
 
 				LONGLONG counts_since_start = now.QuadPart - start_time_counts.QuadPart;
 				
-				if (counts_since_start < target_counts_since_start)
-				{
-					if (sleep_granularity_was_set)
-					{
-						LONGLONG counts_until_next_packet = target_counts_since_start - counts_since_start;
-						double time_until_next_packet_s = (double)counts_until_next_packet / (double)clock_frequency.QuadPart;
-						uint32_t time_until_next_packet_ms = (uint32_t)(time_until_next_packet_s * 1000.0);
-						if (time_until_next_packet_ms > 5) // with a quantum of 1ms the sleep can be 2 or 3ms over
-						{
-							Sleep(time_until_next_packet_ms - 5);
-						}
-					}
-				}
-				else
+				if (counts_since_start >= wait_until_counts)
 				{
 					break;
 				}
 			}
 		}
 
-		// get results
-		bool has_received_first_batch = false;
-		uint32_t num_batches = 0;
-		uint32_t num_batches_received = 0;
-		results_count = 0;
+		// Wait for a bit for any echoes to come back
+		LARGE_INTEGER t;
+		QueryPerformanceCounter(&t);
+		while (true)
+		{
+			if (receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address))
+			{
+				if (recv_buffer[0] == Server_Msg::Test_Packet_Echo)
+				{
+					uint32_t packet_id;
+					read_test_packet_echo(recv_buffer, &packet_id);
 
+					if (!packet_received_ts[packet_id].QuadPart)
+					{
+						QueryPerformanceCounter(&packet_received_ts[packet_id]);
+					}
+				}
+			}
+
+			if (time_since_s(t, clock_frequency) > 5.0f)
+			{
+				break;
+			}
+		}
+
+		// get results
 		packet_size = create_end_test_packet(send_buffer);
 		send_packet(sock, send_buffer, packet_size, &server_address);
 		printf("sent End_Test\n");
@@ -240,6 +246,8 @@ int main(int argc, const char** argv)
 		QueryPerformanceCounter(&time_end_test_sent);
 		LARGE_INTEGER timeout_timer = time_end_test_sent;
 		bool timed_out = false;
+		uint32_t results_num_dropped_packets = 0;
+		uint32_t results_num_duplicated_packets = 0;
 		while (true)
 		{
 			int num_bytes_received = receive_packet(sock, recv_buffer, sizeof(recv_buffer), &server_address);
@@ -247,63 +255,11 @@ int main(int argc, const char** argv)
 			{
 				if (recv_buffer[0] == Server_Msg::Results)
 				{
-					uint32_t batch_id;
-					read_results_packet_header(recv_buffer, &batch_id, &num_batches);
-					
-					if (!has_received_first_batch)
-					{
-						has_received_first_batch = true;
-
-						// it's possible with packet duplication that this array won't be big enough,
-						// very unlikely though
-						if (results_batches_received_capacity < num_batches)
-						{
-							printf("resizing batches_received from %d to %d\n", results_batches_received_capacity, num_batches);
-
-							delete[] results_batches_received;
-							results_batches_received_capacity = num_batches;
-							results_batches_received = new bool[results_batches_received_capacity];
-
-							delete[] results_packet_ids;
-							delete[] results_packet_ts;
-							results_capacity = results_batches_received_capacity * c_num_results_per_batch;
-							results_packet_ids = new uint32_t[results_capacity];
-							results_packet_ts = new LARGE_INTEGER[results_capacity];
-						}
-
-						for (uint32_t i = 0; i < num_batches; ++i)
-						{
-							results_batches_received[i] = false;
-						}
-					}
-
-					printf("got batch %d/%d\n", batch_id + 1, num_batches);
-
-					if (!results_batches_received[batch_id])
-					{
-						results_batches_received[batch_id] = true;
-						++num_batches_received;
-
-						read_results_packet_body(recv_buffer, num_bytes_received, results_packet_ids, results_packet_ts);
-
-						// if it's the last batch, calculate the total number of results
-						if (batch_id == num_batches - 1)
-						{
-							results_count = ((num_batches - 1) * c_num_results_per_batch) + ((num_bytes_received - c_batch_header_size_in_bytes) / c_bytes_per_result);
-						}
-					}
-
-					packet_size = create_ack_results_packet(send_buffer, batch_id);
-					send_packet(sock, send_buffer, packet_size, &server_address);
-
-					QueryPerformanceCounter(&timeout_timer);
+					read_results_packet(recv_buffer, &results_num_dropped_packets, &results_num_duplicated_packets);
+					printf("got Results\n");
+					break;
 				}
 				// Test_Started packet can be ignored here
-			}
-
-			if (num_batches > 0 && num_batches_received == num_batches)
-			{
-				break;
 			}
 
 			if (time_since_s(timeout_timer, clock_frequency) > 30.0f)
@@ -313,7 +269,7 @@ int main(int argc, const char** argv)
 				break;
 			}
 
-			if (!has_received_first_batch && time_since_s(time_end_test_sent, clock_frequency) > 5.0f)
+			if (time_since_s(time_end_test_sent, clock_frequency) > 5.0f)
 			{
 				send_packet(sock, send_buffer, packet_size, &server_address);
 				printf("sent End_Test\n");
@@ -339,18 +295,27 @@ int main(int argc, const char** argv)
 				fprintf(out_file, ",\n");
 			}
 			
-			fprintf(out_file, "\t\t{\n\t\t\tduration_s: %d,\n\t\t\tpackets_per_s: %d,\n\t\t\tpacket_size: %d,\n\t\t\tpackets: [", test_config->duration_s, test_config->packets_per_s, test_config->packet_size);
+			fprintf(out_file, "\t\t{\n\t\t\tduration_s: %d,\n\t\t\tpackets_per_s: %d,\n\t\t\tpacket_size: %d,\n\t\t\tnum_packets_dropped: %d,\n\t\t\tnum_packets_duplicated: %d,\n\t\t\tpackets: [", 
+				test_config->duration_s, test_config->packets_per_s, test_config->packet_size, results_num_dropped_packets, results_num_duplicated_packets);
 
-			for (uint32_t i = 0; i < results_count; ++i)
+			for (uint32_t i = 0; i < num_packets; ++i)
 			{
 				if (i > 0)
 				{
-					fprintf(out_file, ",");
+					fprintf(out_file, ", ");
 				}
-				fprintf(out_file, "\n\t\t\t\t{id: %d, t: %f}", results_packet_ids[i], (double)results_packet_ts[i].QuadPart / (double)server_clock_frequency.QuadPart);
+
+				if (packet_received_ts[i].QuadPart)
+				{
+					fprintf(out_file, "%f", (double)(packet_received_ts[i].QuadPart - packet_sent_ts[i].QuadPart) / (double)clock_frequency.QuadPart);
+				}
+				else
+				{
+					fprintf(out_file, "-1.0");
+				}
 			}
 
-			fprintf(out_file, "\n\t\t\t]\n\t\t}");
+			fprintf(out_file, "]\n\t\t}");
 
 			// next config
 			++test_config;
