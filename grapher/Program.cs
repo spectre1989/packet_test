@@ -64,79 +64,32 @@ namespace grapher
                 UInt32 duration_s = test["duration_s"].ToObject<UInt32>();
                 UInt32 packets_per_s = test["packets_per_s"].ToObject<UInt32>();
                 UInt32 packet_size = test["packet_size"].ToObject<UInt32>();
+                UInt32 num_packets_dropped = test["num_packets_dropped"].ToObject<UInt32>();
+                UInt32 num_packets_duplicated = test["num_packets_duplicated"].ToObject<UInt32>();
                 UInt32 num_packets = duration_s * packets_per_s;
-                double packet_interval_s = 1.0 / packets_per_s;
-
-
-                bool[] packets_delivered = new bool[num_packets];
-                double[] packet_timestamps = new double[num_packets];
-                for (int i = 0; i < num_packets; ++i)
-                {
-                    packets_delivered[i] = false;
-                }
-                UInt32 num_dropped_packets = 0;
-                UInt32 num_duplicate_packets = 0;
-
-                JArray packets = test["packets"] as JArray;
-                foreach (JObject packet in packets)
-                {
-                    UInt32 id = packet["id"].ToObject<UInt32>();
-                    double t = packet["t"].ToObject<double>();
-
-                    if (!packets_delivered[id])
-                    {
-                        packets_delivered[id] = true;
-                        packet_timestamps[id] = t;
-                    }
-                    else
-                    {
-                        ++num_duplicate_packets;
-                    }
-                }
-
-                for (int i = 0; i < num_packets; ++i)
-                {
-                    if (!packets_delivered[i])
-                    {
-                        ++num_dropped_packets;
-                    }
-                }
-
-                float packet_loss_perc = (num_dropped_packets * 100) / (float)num_packets;
-                float packet_dupe_perc = (num_duplicate_packets * 100) / (float)num_packets;
+                float packet_loss_perc = (num_packets_dropped * 100) / (float)num_packets;
+                float packet_dupe_perc = (num_packets_duplicated * 100) / (float)num_packets;
 
 
                 // Title
                 divs += string.Format("<h2>{0} packets per second for {1} seconds, {2} bytes per packet, {3} packets lost({4}%)",
-                    packets_per_s, duration_s, packet_size, num_dropped_packets, packet_loss_perc);
-                if(num_duplicate_packets > 0)
+                    packets_per_s, duration_s, packet_size, num_packets_dropped, packet_loss_perc);
+                if (num_packets_duplicated > 0)
                 {
-                    divs += ", " + num_duplicate_packets.ToString() + " packets duplicated(" + packet_dupe_perc.ToString() + "%)";
+                    divs += ", " + num_packets_duplicated.ToString() + " packets duplicated(" + packet_dupe_perc.ToString() + "%)";
                 }
                 divs += "</h2>";
-                
-                // jitter: compute average delta, because first packet could have jitter that throws the whole graph off
-                double inv_num_packets = 1.0 / num_packets;
-                double avg_jitter_s = 0.0;
-                for (int i = 0; i < num_packets; ++i)
-                {
-                    if (packets_delivered[i])
-                    {
-                        double expected_timestamp_s = i * packet_interval_s;
-                        double delta_s = packet_timestamps[i] - expected_timestamp_s;
-                        avg_jitter_s += delta_s * inv_num_packets;
-                    }
-                }
 
-                // jitter chart
+
+                // Begin chart
                 Chart chart = new Chart();
-                chart.title = "Jitter and Packet Loss";
-                chart.x_axis = "Packet Number";
-                chart.name = "jitter" + test_i.ToString();
-                chart.title = "Jitter";
-                List<string> y_axes = new List<string>(new string[] { "Jitter (ms)" });
+                chart.title = "RTT and Packet Loss";
+                chart.x_axis = "Time (s)";
+                chart.name = "rttChart" + test_i.ToString();
+                chart.title = "RTT/Packet Loss";
+                List<string> y_axes = new List<string>(new string[] { "RTT (ms)" });
                 List<Chart.Series> series = new List<Chart.Series>(new Chart.Series[] { Chart.CreateSeries("Min", "area", 0), Chart.CreateSeries("Max", "area", 0), Chart.CreateSeries("Avg", "area", 0) });
-                if(num_dropped_packets > 0)
+                if (num_packets_dropped > 0)
                 {
                     y_axes.Add("Num Packets");
                     series.Add(Chart.CreateSeries("Dropped Packets", "bars", 1));
@@ -145,58 +98,63 @@ namespace grapher
                 chart.series = series.ToArray();
                 BeginChart(ref chart, writer);
 
+
                 const uint c_max_points_per_graph = 1000;
                 uint num_packets_in_slice = 0;
-                double min_jitter_ms = 0.0;
-                double max_jitter_ms = 0.0;
-                double total_jitter_ms = 0.0;
-                uint num_dropped_packets_in_slice = 0;
+                float min_rtt_ms = 0.0f;
+                float max_rtt_ms = 0.0f;
+                float total_rtt_ms = 0.0f;
+                uint num_packets_dropped_in_slice = 0;
                 uint stride = Math.Max(1, num_packets / c_max_points_per_graph);
-                for (int i = 0; i < num_packets; ++i)
-                {
-                    if (packets_delivered[i])
-                    {
-                        double expected_timestamp_s = i * packet_interval_s;
-                        double jitter_ms = Math.Abs((packet_timestamps[i] - expected_timestamp_s - avg_jitter_s) * 1000.0);
 
+
+                JArray packets = test["packets"] as JArray;
+                for (int i = 0; i < packets.Count; ++i)
+                {
+                    float rtt_ms = packets[i].ToObject<float>() * 1000.0f;
+
+                    if (rtt_ms >= 0.0f)
+                    {
                         ++num_packets_in_slice;
-                        total_jitter_ms += jitter_ms;
-                        if(num_packets_in_slice == 1)
+                        total_rtt_ms += rtt_ms;
+                        if (num_packets_in_slice == 1)
                         {
-                            max_jitter_ms = jitter_ms;
-                            min_jitter_ms = jitter_ms;
+                            max_rtt_ms = rtt_ms;
+                            min_rtt_ms = rtt_ms;
                         }
                         else
                         {
-                            max_jitter_ms = Math.Max(max_jitter_ms, jitter_ms);
-                            min_jitter_ms = Math.Min(min_jitter_ms, jitter_ms);
+                            max_rtt_ms = Math.Max(max_rtt_ms, rtt_ms);
+                            min_rtt_ms = Math.Min(min_rtt_ms, rtt_ms);
                         }
                     }
                     else
                     {
-                        ++num_dropped_packets_in_slice;
+                        ++num_packets_dropped_in_slice;
                     }
 
                     if ((i + 1) % stride == 0 || i == (num_packets - 1))
                     {
-                        double avg_jitter_ms = total_jitter_ms;
+                        float avg_rtt_ms = total_rtt_ms;
                         if (num_packets_in_slice > 0)
                         {
-                            avg_jitter_ms /= num_packets_in_slice;
+                            avg_rtt_ms /= num_packets_in_slice;
                         }
-                        
-                        writer.Write(string.Format(",[{0}, {1}, {2}, {3}", i - stride + 1, min_jitter_ms, max_jitter_ms, avg_jitter_ms));
-                        if (num_dropped_packets > 0)
+
+                        writer.Write(string.Format(",[{0}, {1}, {2}, {3}", (i - stride + 1) / (float)packets_per_s, min_rtt_ms, max_rtt_ms, avg_rtt_ms));
+                        if (num_packets_dropped > 0)
                         {
-                            writer.Write(", " + num_dropped_packets_in_slice.ToString());
+                            writer.Write(", " + num_packets_dropped_in_slice.ToString());
                         }
                         writer.Write("]");
 
                         num_packets_in_slice = 0;
-                        num_dropped_packets_in_slice = 0;
-                        total_jitter_ms = 0.0;
+                        num_packets_dropped_in_slice = 0;
+                        total_rtt_ms = 0.0f;
                     }
                 }
+                
+                
                 uint chart_width = c_max_points_per_graph * 4;
                 EndChart(ref chart, writer, ref divs, chart_width);
             }
