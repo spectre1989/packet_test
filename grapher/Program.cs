@@ -36,6 +36,13 @@ namespace grapher
             }
         }
 
+        struct TestInfo
+        {
+            public float packet_loss_percentage;
+            public UInt32 packets_per_second;
+            public UInt32 bytes_per_second;
+        }
+
         static void CreateReport(string path)
         {
             string extension = Path.GetExtension(path);
@@ -58,6 +65,7 @@ namespace grapher
 
             JObject root = JObject.Parse(new StreamReader(File.OpenRead(path)).ReadToEnd());
             JArray tests = root["tests"] as JArray;
+            List<TestInfo> test_info = new List<TestInfo>();
             for (int test_i = 0; test_i < tests.Count; ++test_i)
             {
                 JObject test = tests[test_i] as JObject;
@@ -69,6 +77,12 @@ namespace grapher
                 UInt32 num_packets = duration_s * packets_per_s;
                 float packet_loss_perc = (num_packets_dropped * 100) / (float)num_packets;
                 float packet_dupe_perc = (num_packets_duplicated * 100) / (float)num_packets;
+
+                TestInfo info;
+                info.packet_loss_percentage = packet_loss_perc;
+                info.packets_per_second = packets_per_s;
+                info.bytes_per_second = packets_per_s * packet_size;
+                test_info.Add(info);
 
 
                 // Title
@@ -86,7 +100,6 @@ namespace grapher
                 chart.title = "RTT and Packet Loss";
                 chart.x_axis = "Time (s)";
                 chart.name = "rttChart" + test_i.ToString();
-                chart.title = "RTT/Packet Loss";
                 List<string> y_axes = new List<string>(new string[] { "RTT (ms)" });
                 List<Chart.Series> series = new List<Chart.Series>(new Chart.Series[] { Chart.CreateSeries("Min", "area", 0), Chart.CreateSeries("Max", "area", 0), Chart.CreateSeries("Avg", "area", 0) });
                 if (num_packets_dropped > 0)
@@ -158,6 +171,24 @@ namespace grapher
                 uint chart_width = c_max_points_per_graph * 4;
                 EndChart(ref chart, writer, ref divs, chart_width);
             }
+
+            // packet loss graph
+            Chart overallChart = new Chart();
+            overallChart.title = "Packet Loss";
+            overallChart.x_axis = "Packet Loss";
+            overallChart.name = "packetLoss";
+            overallChart.title = "Packet Loss";
+            overallChart.y_axes = new string[] { "Bytes Per Second", "Packets Per Second" };
+            overallChart.series = new Chart.Series[] { Chart.CreateSeries("Bytes", "line", 0), Chart.CreateSeries("Packets", "line", 1) };
+            BeginChart(ref overallChart, writer);
+            test_info.Sort(delegate (TestInfo a, TestInfo b) { return a.packet_loss_percentage.CompareTo(b.packet_loss_percentage); });
+            foreach (TestInfo info in test_info)
+            {
+                writer.Write(string.Format(",[{0}, {1}, {2}]", info.packet_loss_percentage, info.bytes_per_second, info.packets_per_second));
+            }
+            uint c_chart_width = 800;
+            EndChart(ref overallChart, writer, ref divs, c_chart_width);
+
 
             writer.WriteLine("}</script></head><body>" + divs + "</body></html>");
             writer.Flush();
