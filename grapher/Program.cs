@@ -98,6 +98,7 @@ namespace grapher
                 // Begin chart
                 Chart chart = new Chart();
                 chart.title = "RTT and Packet Loss";
+                chart.type = "Combo";
                 chart.x_axis = "Time (s)";
                 chart.name = "rttChart" + test_i.ToString();
                 List<string> y_axes = new List<string>(new string[] { "RTT (ms)" });
@@ -172,21 +173,33 @@ namespace grapher
                 EndChart(ref chart, writer, ref divs, chart_width);
             }
 
-            // packet loss graph
+            // Packets per sec vs packet loss
             Chart overallChart = new Chart();
-            overallChart.title = "Packet Loss";
-            overallChart.x_axis = "Packet Loss";
-            overallChart.name = "packetLoss";
-            overallChart.title = "Packet Loss";
-            overallChart.y_axes = new string[] { "Bytes Per Second", "Packets Per Second" };
-            overallChart.series = new Chart.Series[] { Chart.CreateSeries("Bytes", "line", 0), Chart.CreateSeries("Packets", "line", 1) };
+            overallChart.title = "Packets Per Sec/Packet Loss";
+            overallChart.type = "Scatter";
+            overallChart.x_axis = "Packets Per Sec";
+            overallChart.name = "packetsPerSec";
+            overallChart.y_axes = new string[] { "Packet Loss" };
+            overallChart.series = new Chart.Series[] { Chart.CreateSeries("Packets Per Sec", "scatter", 0) };
             BeginChart(ref overallChart, writer);
-            test_info.Sort(delegate (TestInfo a, TestInfo b) { return a.packet_loss_percentage.CompareTo(b.packet_loss_percentage); });
             foreach (TestInfo info in test_info)
             {
-                writer.Write(string.Format(",[{0}, {1}, {2}]", info.packet_loss_percentage, info.bytes_per_second, info.packets_per_second));
+                writer.Write(string.Format(",[{0}, {1}]", info.packets_per_second, info.packet_loss_percentage));
             }
             uint c_chart_width = 800;
+            EndChart(ref overallChart, writer, ref divs, c_chart_width);
+
+
+            // Bytes per sec vs packet loss
+            overallChart.title = "Bytes Per Sec/Packet Loss";
+            overallChart.x_axis = "Bytes Per Sec";
+            overallChart.name = "bytesPerSec";
+            overallChart.series = new Chart.Series[] { Chart.CreateSeries("Bytes Per Sec", "scatter", 0) };
+            BeginChart(ref overallChart, writer);
+            foreach (TestInfo info in test_info)
+            {
+                writer.Write(string.Format(",[{0}, {1}]", info.bytes_per_second, info.packet_loss_percentage));
+            }
             EndChart(ref overallChart, writer, ref divs, c_chart_width);
 
 
@@ -198,6 +211,7 @@ namespace grapher
         struct Chart
         {
             public string name;
+            public string type;
             public string x_axis;
             public Series[] series;
             public string[] y_axes;
@@ -265,7 +279,7 @@ namespace grapher
             writer.WriteLine("series: {" + seriesString + "}, vAxes: {" + axesString + "}");
             writer.WriteLine("};");
 
-            writer.WriteLine(string.Format("var {0}_chart = new google.visualization.ComboChart(document.getElementById('{0}_div'));", chart.name));
+            writer.WriteLine(string.Format("var {0}_chart = new google.visualization.{1}Chart(document.getElementById('{0}_div'));", chart.name, chart.type));
             writer.WriteLine(string.Format("{0}_chart.draw({0}_data, {0}_options); ", chart.name));
 
             divs += string.Format("<div id = \"{0}_div\" style=\"width: {1}px; height: 800px; \"></div>", chart.name, width);
