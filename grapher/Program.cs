@@ -102,7 +102,7 @@ namespace grapher
                 chart.x_axis = "Time (s)";
                 chart.name = "rttChart" + test_i.ToString();
                 List<string> y_axes = new List<string>(new string[] { "RTT (ms)" });
-                List<Chart.Series> series = new List<Chart.Series>(new Chart.Series[] { Chart.CreateSeries("Min", "area", 0), Chart.CreateSeries("Max", "area", 0), Chart.CreateSeries("Avg", "area", 0) });
+                List<Chart.Series> series = new List<Chart.Series>(new Chart.Series[] { Chart.CreateSeries("Min", "area", 0), Chart.CreateSeries("Max", "area", 0), Chart.CreateSeries("Avg", "area", 0), Chart.CreateSeries("Avg Distance from Avg", "area", 0) });
                 if (num_packets_dropped > 0)
                 {
                     y_axes.Add("Num Packets");
@@ -120,9 +120,11 @@ namespace grapher
                 float total_rtt_ms = 0.0f;
                 uint num_packets_dropped_in_slice = 0;
                 uint stride = Math.Max(1, num_packets / c_max_points_per_graph);
+                uint actual_num_points = 0;
 
 
                 JArray packets = test["packets"] as JArray;
+                int lastSliceStart = 0;
                 for (int i = 0; i < packets.Count; ++i)
                 {
                     float rtt_ms = packets[i].ToObject<float>() * 1000.0f;
@@ -154,13 +156,25 @@ namespace grapher
                         {
                             avg_rtt_ms /= num_packets_in_slice;
                         }
+                        float avg_distance_from_mean = 0.0f;
+                        for(int j = lastSliceStart; j <= i; ++j)
+                        {
+                            rtt_ms = packets[j].ToObject<float>() * 1000.0f;
+                            if(rtt_ms > 0.0f)
+                            {
+                                avg_distance_from_mean += Math.Abs(avg_rtt_ms - rtt_ms);
+                            }
+                        }
+                        lastSliceStart = i + 1;
+                        avg_distance_from_mean /= num_packets_in_slice;
 
-                        writer.Write(string.Format(",[{0}, {1}, {2}, {3}", (i - stride + 1) / (float)packets_per_s, min_rtt_ms, max_rtt_ms, avg_rtt_ms));
+                        writer.Write(string.Format(",[{0}, {1}, {2}, {3}, {4}", (i - stride + 1) / (float)packets_per_s, min_rtt_ms, max_rtt_ms, avg_rtt_ms, avg_distance_from_mean));
                         if (num_packets_dropped > 0)
                         {
                             writer.Write(", " + num_packets_dropped_in_slice.ToString());
                         }
                         writer.Write("]");
+                        ++actual_num_points;
 
                         num_packets_in_slice = 0;
                         num_packets_dropped_in_slice = 0;
@@ -169,7 +183,7 @@ namespace grapher
                 }
                 
                 
-                uint chart_width = c_max_points_per_graph * 4;
+                uint chart_width = actual_num_points * 4;
                 EndChart(ref chart, writer, ref divs, chart_width);
             }
 
